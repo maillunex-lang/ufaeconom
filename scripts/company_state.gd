@@ -211,7 +211,7 @@ func load_game() -> bool:
 			new_markets[id] = wallets
 		for name in new_totals:
 			var amount := int(total_data.get(name, 0))
-			if amount < 0 and name != "cashflow":
+			if amount < 0 and name not in ["cashflow", "profit"]:
 				return false
 			new_totals[name] = amount
 		new_report = report_data
