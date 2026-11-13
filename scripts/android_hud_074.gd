@@ -22,6 +22,15 @@ var menu_open := true
 var camera_home: Button
 var active_tab := "Город"
 var nav_buttons: Dictionary = {}
+var nav: HBoxContainer
+var menu_backdrop: ColorRect
+var menu_scroll: ScrollContainer
+var business_close: Button
+var business_title: Label
+var business_actions: HBoxContainer
+var settings_button: Button
+var compact_layout := false
+const UI_MIN_TOUCH := 48.0
 
 func _ready() -> void:
     layer = 20
@@ -33,7 +42,22 @@ func _ready() -> void:
     bottom = _panel("HUDBottom")
     details = _panel("HUDDetails")
     business_panel = _panel("BusinessDetails")
-    business_text = _label(business_panel, "Выберите предприятие", 15)
+    var business_box := VBoxContainer.new()
+    business_box.add_theme_constant_override("separation", 8)
+    business_panel.add_child(business_box)
+    var business_header := HBoxContainer.new()
+    business_box.add_child(business_header)
+    business_title = _label(business_header, "ПРЕДПРИЯТИЕ", 18)
+    business_close = Button.new()
+    business_close.text = "✕"
+    business_close.custom_minimum_size = Vector2(UI_MIN_TOUCH, UI_MIN_TOUCH)
+    business_close.pressed.connect(func() -> void: business_panel.visible = false)
+    business_header.add_child(business_close)
+    business_text = _label(business_box, "Выберите предприятие", 15)
+    business_text.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+    business_actions = HBoxContainer.new()
+    business_box.add_child(business_actions)
+    _button(business_actions, "Управление", func() -> void: game.tycoon_panel.toggle())
     business_panel.visible = false
     var header := HBoxContainer.new()
     header.add_theme_constant_override("separation", 16)
@@ -41,9 +65,9 @@ func _ready() -> void:
     city_text = _label(header, "ГОРОД", 19)
     money_text = _label(header, "Баланс: ...", 18)
     calendar_text = _label(header, "Дата: ...", 16)
-    var nav := HBoxContainer.new()
+    nav = HBoxContainer.new()
     nav.alignment = BoxContainer.ALIGNMENT_CENTER
-    nav.add_theme_constant_override("separation", 8)
+    nav.add_theme_constant_override("separation", 6)
     bottom.add_child(nav)
     for item in [
         ["Город", _show_city], ["Бизнес", _show_business],
@@ -53,7 +77,9 @@ func _ready() -> void:
         var tab := Button.new()
         tab.name = "Tab" + str(item[0])
         tab.text = str(item[0])
-        tab.custom_minimum_size = Vector2(112, 52)
+        tab.custom_minimum_size = Vector2(96, 52)
+        tab.toggle_mode = true
+        _style_button(tab, false)
         tab.size_flags_horizontal = Control.SIZE_EXPAND_FILL
         tab.pressed.connect(item[1])
         nav.add_child(tab)
@@ -61,22 +87,37 @@ func _ready() -> void:
     camera_home = Button.new()
     camera_home.name = "CameraHome"
     camera_home.text = "⌂"
+    camera_home.tooltip_text = "К центру города"
+    _style_button(camera_home, false)
     camera_home.custom_minimum_size = Vector2(56, 56)
     safe.add_child(camera_home)
     camera_home.pressed.connect(_center_city)
+    menu_backdrop = ColorRect.new()
+    menu_backdrop.name = "MenuBackdrop"
+    menu_backdrop.color = Color("#07151fc9")
+    menu_backdrop.mouse_filter = Control.MOUSE_FILTER_STOP
+    safe.add_child(menu_backdrop)
     menu_overlay = _panel("MainMenuOverlay")
+    menu_scroll = ScrollContainer.new()
+    menu_scroll.name = "MenuScroll"
+    menu_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+    menu_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+    menu_overlay.add_child(menu_scroll)
     var menu_box := VBoxContainer.new()
-    menu_box.add_theme_constant_override("separation", 12)
-    menu_overlay.add_child(menu_box)
-    var brand := _label(menu_box, "BUSINESS EMPIRE\nONLINE", 36)
+    menu_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    menu_box.add_theme_constant_override("separation", 9)
+    menu_scroll.add_child(menu_box)
+    var brand := _label(menu_box, "BUSINESS EMPIRE\nONLINE", 32)
     brand.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
     var tagline := _label(menu_box, "Управляйте городом. Постройте свою корпорацию.", 16)
     tagline.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+    var divider := HSeparator.new()
+    menu_box.add_child(divider)
     menu_buttons = VBoxContainer.new()
     menu_buttons.add_theme_constant_override("separation", 10)
     menu_box.add_child(menu_buttons)
-    _menu_button("Продолжить", _resume)
-    _menu_button("Играть", _resume)
+    _menu_button("Продолжить игру", _resume)
+    _menu_button("В город", _resume)
     _menu_button("Профиль / MMO", _open_profile)
     _menu_button("Настройки", _open_settings)
     _menu_button("Выход", _exit_to_os)
@@ -90,11 +131,11 @@ func _panel(n: String) -> PanelContainer:
     var panel := PanelContainer.new()
     panel.name = n
     var style := StyleBoxFlat.new()
-    style.bg_color = Color("#13232de8")
-    style.border_color = Color("#557d80")
+    style.bg_color = Color("#102431ef")
+    style.border_color = Color("#648b96")
     style.set_border_width_all(1)
-    style.set_corner_radius_all(12)
-    style.set_content_margin_all(10)
+    style.set_corner_radius_all(14)
+    style.set_content_margin_all(12)
     panel.add_theme_stylebox_override("panel", style)
     safe.add_child(panel)
     return panel
@@ -114,21 +155,49 @@ func _button(parent: Node, content: String, action: Callable) -> void:
     button.text = content
     button.custom_minimum_size = Vector2(110, 48)
     button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    _style_button(button, false)
     button.pressed.connect(action)
     parent.add_child(button)
 
 func _menu_button(title: String, action: Callable) -> void:
     var b := Button.new()
     b.text = title
-    b.custom_minimum_size = Vector2(280, 54)
+    b.custom_minimum_size = Vector2(200, 54)
+    _style_button(b, title == "Продолжить игру")
     b.pressed.connect(action)
     menu_buttons.add_child(b)
+
+
+func _style_button(button: Button, primary: bool) -> void:
+    var normal := StyleBoxFlat.new()
+    normal.bg_color = Color("#217c84") if primary else Color("#203d4a")
+    normal.border_color = Color("#7bb8b5") if primary else Color("#4c727d")
+    normal.set_border_width_all(1)
+    normal.set_corner_radius_all(10)
+    normal.set_content_margin_all(7)
+    var hover := normal.duplicate()
+    hover.bg_color = Color("#339ba1") if primary else Color("#315967")
+    var pressed := normal.duplicate()
+    pressed.bg_color = Color("#145d65") if primary else Color("#2d6c79")
+    button.add_theme_stylebox_override("normal", normal)
+    button.add_theme_stylebox_override("hover", hover)
+    button.add_theme_stylebox_override("pressed", pressed)
+    button.add_theme_stylebox_override("hover_pressed", pressed)
+    button.add_theme_color_override("font_color", Color("#f4f8f8"))
+    button.add_theme_color_override("font_hover_color", Color("#ffffff"))
+    button.add_theme_font_size_override("font_size", 16)
+
+
+func _set_menu_visible(value: bool) -> void:
+    menu_open = value
+    menu_overlay.visible = value
+    menu_backdrop.visible = value
 
 
 func _update_nav() -> void:
     for key in nav_buttons:
         var b: Button = nav_buttons[key]
-        b.button_pressed = key == active_tab
+        b.set_pressed_no_signal(key == active_tab)
         b.modulate = Color("#ffffff") if key == active_tab else Color("#b4c7d3")
 
 
@@ -139,6 +208,8 @@ func _close_panels() -> void:
         panel.visible = false
     _set_mmo_visible(false)
     business_panel.visible = false
+    if game.tycoon_panel != null and game.tycoon_panel.visible:
+        game.tycoon_panel.visible = false
 
 
 func _show_city() -> void:
@@ -178,14 +249,12 @@ func _show_tasks() -> void:
 func _show_menu() -> void:
     active_tab = "Меню"
     _close_panels()
-    menu_open = true
-    menu_overlay.visible = true
+    _set_menu_visible(true)
     _update_nav()
 
 
 func _resume() -> void:
-    menu_open = false
-    menu_overlay.visible = false
+    _set_menu_visible(false)
     active_tab = "Город"
     _update_nav()
 
@@ -218,8 +287,7 @@ func attach_legacy() -> void:
             panel.visible = false
     _set_mmo_visible(false)
     update_values()
-    menu_open = true
-    menu_overlay.visible = true
+    _set_menu_visible(true)
 
 func _cycle_quality() -> void:
     visual_quality = (visual_quality + 1) % 3
@@ -243,7 +311,8 @@ func update_business() -> void:
     if building == "":
         business_text.text = "Выберите построенное предприятие"
         return
-    var label := "Предприятие: %s" % building
+    business_title.text = building.to_upper()
+    var label := "Участок %d:%d" % [game.selected.x, game.selected.y]
     if game.mmo_panel.online_active():
         var kind := str(game.Land.SERVER_KINDS.get(building, ""))
         var fields: Dictionary = game.SmartCity076.display_metrics(game.mmo_panel.client.snapshot, kind)
@@ -288,9 +357,17 @@ func update_values() -> void:
     money_text.text = "Баланс: %d ₽" % int(game.mmo_panel.client.snapshot.get("cash_minor", 0) / 100) if game.mmo_panel.online_active() else "Локально: %d ₽" % game.company.cash
     calendar_text.text = "MMO • день %d" % int(game.mmo_panel.client.snapshot.get("game_day", 0)) if game.mmo_panel.online_active() else str(game.Calendar.label(game.company.day)) + " • 1 мес. / 24 ч"
     if game.selected.x >= 0:
-        details.visible = true
-        details_text.text = "Участок %d:%d • %s" % [game.selected.x, game.selected.y, game.info.text]
+        var building: String = game._building_at(game.selected)
+        if building != "" and not menu_open:
+            business_panel.visible = true
+            update_business()
+            details.visible = false
+        else:
+            business_panel.visible = false
+            details.visible = not menu_open
+            details_text.text = "Участок %d:%d • %s" % [game.selected.x, game.selected.y, game.info.text]
     else:
+        business_panel.visible = false
         details.visible = false
     _layout()
 
@@ -301,17 +378,30 @@ func _layout() -> void:
     var w: float = safe.size.x
     var h: float = safe.size.y
     top.position = Vector2.ZERO
-    top.size = Vector2(w, 58)
-    bottom.position = Vector2(0, maxf(0, h - 76))
-    bottom.size = Vector2(w, 76)
-    camera_home.position = Vector2(0, maxf(68, h - 150))
-    camera_home.size = Vector2(56, 56)
-    var menu_width := minf(490, w * 0.55)
-    var menu_height := minf(550, h * 0.88)
+    compact_layout = w < 850 or h < 430
+    top.size = Vector2(w, 54 if compact_layout else 58)
+    nav.add_theme_constant_override("separation", 2 if compact_layout else 6)
+    for key in nav_buttons:
+        var tab: Button = nav_buttons[key]
+        tab.custom_minimum_size = Vector2(UI_MIN_TOUCH, 48 if compact_layout else 52)
+        tab.add_theme_font_size_override("font_size", 13 if compact_layout else 16)
+    city_text.add_theme_font_size_override("font_size", 14 if compact_layout else 19)
+    money_text.add_theme_font_size_override("font_size", 14 if compact_layout else 18)
+    calendar_text.add_theme_font_size_override("font_size", 12 if compact_layout else 16)
+    var bottom_height := 58.0 if compact_layout else 76.0
+    bottom.position = Vector2(0, maxf(0, h - bottom_height))
+    bottom.size = Vector2(w, bottom_height)
+    camera_home.position = Vector2(0, maxf(62, h - bottom_height - 62))
+    camera_home.size = Vector2(52, 52)
+    menu_backdrop.position = Vector2.ZERO
+    menu_backdrop.size = Vector2(w, h)
+    var menu_width := minf(470, w * 0.78)
+    var menu_height := minf(490, h * 0.84)
     menu_overlay.position = Vector2((w - menu_width) * 0.5, (h - menu_height) * 0.5)
     menu_overlay.size = Vector2(menu_width, menu_height)
-    var detail_width := minf(460, w * 0.40)
+    var detail_width := minf(460, w * 0.60)
     details.position = Vector2((w - detail_width) * 0.5, 65)
     details.size = Vector2(detail_width, 54)
-    business_panel.position = Vector2(maxf(0, w - 365), 66)
-    business_panel.size = Vector2(minf(365, w), minf(180, h * 0.32))
+    var card_width := minf(360, w * 0.42)
+    business_panel.position = Vector2(maxf(0, w - card_width), 66)
+    business_panel.size = Vector2(card_width, minf(240, h * 0.47))
