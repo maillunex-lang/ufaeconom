@@ -56,7 +56,8 @@ def _facility(owner: str, city: str, kind: str, ident: str,
 def new_world(epoch_unix: int = 1800000000) -> dict:
     if epoch_unix <= 0:
         raise EconomyError("epoch must be positive")
-    wallets = {"company:player": 200_000_000, "company:npc": 200_000_000}
+    wallets = {"company:player": 200_000_000, "company:rival": 200_000_000,
+               "company:npc": 200_000_000}
     suppliers, facilities = {}, {}
     for city in CITIES:
         wallets[f"residents:{city}"] = 20_000_000
@@ -67,6 +68,8 @@ def new_world(epoch_unix: int = 1800000000) -> dict:
         _facility("player", "ufa", "factory", "player-factory", {"grain": 60}),
         _facility("player", "ufa", "shop", "player-shop", {"bread": 30, "milk": 10}),
         _facility("player", "sterlitamak", "shop", "player-sterlitamak", {"bread": 10}),
+        _facility("rival", "tuymazy", "shop", "rival-shop", {"bread": 22}),
+        _facility("rival", "sterlitamak", "factory", "rival-factory", {"grain": 60}),
         _facility("npc", "ufa", "factory", "npc-factory", {"grain": 60}),
         _facility("npc", "ufa", "shop", "npc-shop", {"bread": 30, "milk": 10}),
         _facility("npc", "sterlitamak", "shop", "npc-sterlitamak", {"bread": 20}),
@@ -260,7 +263,7 @@ def _produce(w: dict) -> None:
 
 
 def _local_restock(w: dict) -> None:
-    for owner in ("npc", "player"):
+    for owner in ("npc", "player", "rival"):
         for city in CITIES:
             factories = sorted((f for f in w["facilities"].values()
                                 if f["owner"] == owner and f["city"] == city
@@ -354,7 +357,7 @@ def due_ticks(w: dict, server_now_unix: int) -> int:
 
 
 def apply_command(w: dict, actor: str, command: dict) -> dict:
-    if actor not in ("player", "npc"):
+    if actor not in ("player", "rival"):
         raise EconomyError("unknown actor")
     command_id = command.get("command_id")
     if not isinstance(command_id, str) or not (8 <= len(command_id) <= 120):
