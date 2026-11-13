@@ -7,6 +7,7 @@ func _initialize() -> void:
 	_test_shop_factory_and_accounting()
 	_test_capacity_and_shortages()
 	_test_household_budget()
+	_test_supplier_scarcity()
 	_test_legacy_migration()
 	call_deferred("_test_main_ui")
 
@@ -166,3 +167,18 @@ func _test_main_ui() -> void:
 	print("SCENARIO_UI_TIMER_AND_NEXT_DAY_OK")
 	print("ECONOMY_04_TESTS_PASSED")
 	quit(0)
+
+func _test_supplier_scarcity() -> void:
+	var c = _fresh("scarcity")
+	c.cash = 5000000
+	for n in range(3):
+		var tile := Vector2i(2 + n, 2)
+		c.owned[c.key(3, tile)] = {"city": 3, "x": tile.x, "y": tile.y, "building": "Завод"}
+	c.owned[c.key(3, Vector2i(2, 3))] = {"city": 3, "x": 2, "y": 3, "building": "Склад"}
+	var report: Dictionary = c.advance_day()
+	var city: Dictionary = report["cities"]["3"]
+	assert(report["accounting_ok"])
+	assert(int(city["produced_bread"]) == 24, "Scarce regional grain should limit three factories to one batch")
+	assert(int(city["blocked"]) >= 2)
+	assert(int(c.market(3)["supplier_stock"]["Зерно"]) == 6)
+	print("SCENARIO_REGIONAL_SUPPLIER_SCARCITY_OK")
