@@ -525,7 +525,8 @@ def apply_command(w: dict, actor: str, command: dict) -> dict:
 
 
 def snapshot(w: dict, actor: str) -> dict:
-    if actor not in ("player", "rival"):
+    if (not isinstance(actor, str) or actor == "npc" or
+            "company:" + actor not in w["wallets"]):
         raise EconomyError("unknown actor")
     own = {fid: copy.deepcopy(fac) for fid, fac in w["facilities"].items()
            if fac["owner"] == actor}
