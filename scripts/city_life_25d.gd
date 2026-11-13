@@ -1,6 +1,7 @@
 extends Node2D
 ## Decorative 2.5D traffic only. No economy or server writes.
 const Land = preload("res://scripts/city_land.gd")
+const Smart = preload("res://scripts/smart_city_076.gd")
 const W := 96.0
 const H := 48.0
 var city: Node2D
@@ -31,6 +32,7 @@ func _draw() -> void:
     for key in chunks:
         open[key] = true
     var vehicle_count := 0
+    var drawn_routes := 0
     var max_vehicles := 12 if detail_quality == 0 else 32 if detail_quality == 1 else 48
     var max_people := 10 if detail_quality == 0 else 32 if detail_quality == 1 else 48
     var people_count := 0
@@ -58,6 +60,16 @@ func _draw() -> void:
                 draw_colored_polygon(PackedVector2Array([pos+Vector2(0,-5),pos+Vector2(7,-2),pos+Vector2(7,2),pos+Vector2(0,0)]),tint)
                 draw_line(pos,pos+direction.normalized()*7.0,Color("#415668"),2.0)
                 vehicle_count += 1
+                # A short deterministic street route for visual delivery vans.
+                if detail_quality >= 1 and (x + y) % 9 == 0 and drawn_routes < 5:
+                    var target := tile + Vector2i(0, 2) if road_x else tile + Vector2i(2, 0)
+                    var route := Smart.route(city.city_index, tile, target, open, 24)
+                    if route.size() >= 2:
+                        var at := fposmod(clock * 0.25 + float((x + y) % 7) * 0.13, float(route.size() - 1))
+                        var idx := int(at)
+                        var p := _iso(Vector2(route[idx]).lerp(Vector2(route[idx + 1]), at - float(idx)))
+                        draw_rect(Rect2(p + Vector2(-5, -5), Vector2(10, 7)), Color("#c4a46e"))
+                        drawn_routes += 1
             if (x*17+y*23)%13 == 0 and people_count < max_people:
                 var phase2 := fposmod(clock*0.19+float((x+y)%9)*0.21,1.0)
                 var neighbor2 := Vector2i(x+1,y) if road_y else Vector2i(x,y+1)
