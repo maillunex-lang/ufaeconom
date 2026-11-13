@@ -32,6 +32,7 @@ const WAREHOUSE_CAPACITY := 240
 static func new_market() -> Dictionary:
 	return {
 		"stock": {"Зерно": 0, "Хлеб": 0, "Молоко": 0},
+		"inventory_cost": {"Зерно": 0, "Хлеб": 0, "Молоко": 0},
 		"residents_cash": START_CITY_RESIDENTS,
 		"supplier_cash": START_CITY_SUPPLIERS,
 		"city_budget": START_CITY_BUDGET
@@ -58,13 +59,16 @@ static func monetary_total(company: RefCounted) -> int:
 		total += int(market["residents_cash"]) + int(market["supplier_cash"]) + int(market["city_budget"])
 	return total
 
-static func _expense(company: RefCounted, market: Dictionary, stats: Dictionary, city_stats: Dictionary, amount: int, recipient: String, title: String) -> bool:
+static func _expense(company: RefCounted, market: Dictionary, stats: Dictionary, city_stats: Dictionary, amount: int, recipient: String, title: String, profit_direct: bool = false) -> bool:
 	if amount < 0 or company.cash < amount:
 		return false
 	company.cash -= amount
 	market[recipient] = int(market[recipient]) + amount
 	stats["expenses"] = int(stats["expenses"]) + amount
 	city_stats["expenses"] = int(city_stats["expenses"]) + amount
+	if profit_direct:
+		stats["operating_expense"] = int(stats["operating_expense"]) + amount
+		city_stats["operating_expense"] = int(city_stats["operating_expense"]) + amount
 	var breakdown: Dictionary = stats["expense_breakdown"]
 	breakdown[title] = int(breakdown.get(title, 0)) + amount
 	return true
@@ -79,6 +83,8 @@ static func _procure(company: RefCounted, market: Dictionary, stats: Dictionary,
 		return false
 	var stock: Dictionary = market["stock"]
 	stock[good] = int(stock[good]) + quantity
+	var inventory_cost: Dictionary = market["inventory_cost"]
+	inventory_cost[good] = int(inventory_cost[good]) + cost
 	city_stats["purchased"] = int(city_stats["purchased"]) + quantity
 	return true
 
@@ -92,14 +98,22 @@ static func _sell(company: RefCounted, market: Dictionary, stats: Dictionary, ci
 	if sold <= 0:
 		return 0
 	var receipt := sold * price
-	stock[good] = int(stock[good]) - sold
+	var inventory_cost: Dictionary = market["inventory_cost"]
+	var old_quantity: int = int(stock[good])
+	var cogs: int = int(int(inventory_cost[good]) * sold / old_quantity)
+	if sold == old_quantity:
+		cogs = int(inventory_cost[good])
+	inventory_cost[good] = int(inventory_cost[good]) - cogs
+	stats["cogs"] = int(stats["cogs"]) + cogs
+	city_stats["cogs"] = int(city_stats["cogs"]) + cogs
+	stock[good] = old_quantity - sold
 	market["residents_cash"] = int(market["residents_cash"]) - receipt
 	company.cash += receipt
 	stats["revenue"] = int(stats["revenue"]) + receipt
 	city_stats["revenue"] = int(city_stats["revenue"]) + receipt
 	var tax: int = int(receipt * SALES_TAX_BPS / 10000)
 	if tax > 0:
-		_expense(company, market, stats, city_stats, tax, "city_budget", "Налог с продаж")
+		_expense(company, market, stats, city_stats, tax, "city_budget", "Налог с продаж", true)
 	return sold
 
 static func _npc_income(market: Dictionary) -> void:
@@ -118,6 +132,7 @@ static func step(company: RefCounted) -> Dictionary:
 	company.day += 1
 	var stats := {
 		"day": company.day, "revenue": 0, "expenses": 0,
+		"cogs": 0, "operating_expense": 0, "profit": 0,
 		"produced_bread": 0, "sold_bread": 0, "sold_milk": 0,
 		"unmet_bread": 0, "unmet_milk": 0, "blocked": 0,
 		"expense_breakdown": {}, "cities": {}
@@ -143,11 +158,12 @@ static func step(company: RefCounted) -> Dictionary:
 			"city": city, "shops": shops, "factories": factories, "warehouses": warehouses,
 			"bread_demand": bread_demand, "milk_demand": milk_demand,
 			"produced_bread": 0, "sold_bread": 0, "sold_milk": 0,
-			"purchased": 0, "revenue": 0, "expenses": 0, "blocked": 0
+			"purchased": 0, "revenue": 0, "expenses": 0,
+			"cogs": 0, "operating_expense": 0, "profit": 0, "blocked": 0
 		}
 		# Paid storage maintenance is a transfer to local suppliers.
 		for w in range(warehouses):
-			if not _expense(company, market, stats, result, WAREHOUSE_MAINTENANCE, "supplier_cash", "Содержание склада"):
+			if not _expense(company, market, stats, result, WAREHOUSE_MAINTENANCE, "supplier_cash", "Содержание склада", true):
 				result["blocked"] = int(result["blocked"]) + 1
 		# One bakery batch per factory per day.
 		for f in range(factories):
@@ -165,7 +181,14 @@ static func step(company: RefCounted) -> Dictionary:
 			_expense(company, market, stats, result, WORKSHOP_WAGES, "residents_cash", "Зарплата завода")
 			_expense(company, market, stats, result, WORKSHOP_ENERGY, "supplier_cash", "Энергия завода")
 			_expense(company, market, stats, result, WORKSHOP_MAINTENANCE, "supplier_cash", "Содержание завода")
-			stock["Зерно"] = int(stock["Зерно"]) - BAKERY_GRAIN
+			var costs: Dictionary = market["inventory_cost"]
+			var grain_quantity: int = int(stock["Зерно"])
+			var used_cost: int = int(int(costs["Зерно"]) * BAKERY_GRAIN / grain_quantity)
+			if BAKERY_GRAIN == grain_quantity:
+				used_cost = int(costs["Зерно"])
+			costs["Зерно"] = int(costs["Зерно"]) - used_cost
+			costs["Хлеб"] = int(costs["Хлеб"]) + used_cost + WORKSHOP_WAGES + WORKSHOP_ENERGY + WORKSHOP_MAINTENANCE
+			stock["Зерно"] = grain_quantity - BAKERY_GRAIN
 			stock["Хлеб"] = int(stock["Хлеб"]) + BAKERY_BREAD
 			result["produced_bread"] = int(result["produced_bread"]) + BAKERY_BREAD
 		# Shops consume their actual running budgets; stores with no cash cannot sell.
@@ -174,9 +197,9 @@ static func step(company: RefCounted) -> Dictionary:
 			if company.cash < STORE_WAGES + STORE_UTILITIES + STORE_TRANSPORT:
 				result["blocked"] = int(result["blocked"]) + 1
 				continue
-			_expense(company, market, stats, result, STORE_WAGES, "residents_cash", "Зарплата магазина")
-			_expense(company, market, stats, result, STORE_UTILITIES, "supplier_cash", "Коммунальные услуги")
-			_expense(company, market, stats, result, STORE_TRANSPORT, "supplier_cash", "Доставка")
+			_expense(company, market, stats, result, STORE_WAGES, "residents_cash", "Зарплата магазина", true)
+			_expense(company, market, stats, result, STORE_UTILITIES, "supplier_cash", "Коммунальные услуги", true)
+			_expense(company, market, stats, result, STORE_TRANSPORT, "supplier_cash", "Доставка", true)
 			open_shops += 1
 		if open_shops > 0:
 			var milk_needed: int = maxi(0, mini(milk_demand, open_shops * STORE_MILK_PER_DAY) - int(stock["Молоко"]))
@@ -186,6 +209,7 @@ static func step(company: RefCounted) -> Dictionary:
 			var milk_requested: int = mini(milk_demand, open_shops * STORE_MILK_PER_DAY)
 			result["sold_bread"] = _sell(company, market, stats, result, "Хлеб", bread_requested)
 			result["sold_milk"] = _sell(company, market, stats, result, "Молоко", milk_requested)
+		result["profit"] = int(result["revenue"]) - int(result["cogs"]) - int(result["operating_expense"])
 		stats["produced_bread"] = int(stats["produced_bread"]) + int(result["produced_bread"])
 		stats["sold_bread"] = int(stats["sold_bread"]) + int(result["sold_bread"])
 		stats["sold_milk"] = int(stats["sold_milk"]) + int(result["sold_milk"])
@@ -194,6 +218,7 @@ static func step(company: RefCounted) -> Dictionary:
 		stats["blocked"] = int(stats["blocked"]) + int(result["blocked"])
 		stats["cities"][str(city)] = result
 	stats["cashflow"] = int(stats["revenue"]) - int(stats["expenses"])
+	stats["profit"] = int(stats["revenue"]) - int(stats["cogs"]) - int(stats["operating_expense"])
 	var after := monetary_total(company)
 	stats["accounting_ok"] = before == after
 	if not stats["accounting_ok"]:
@@ -202,5 +227,6 @@ static func step(company: RefCounted) -> Dictionary:
 	company.totals["revenue"] = int(company.totals["revenue"]) + int(stats["revenue"])
 	company.totals["expenses"] = int(company.totals["expenses"]) + int(stats["expenses"])
 	company.totals["cashflow"] = int(company.totals["cashflow"]) + int(stats["cashflow"])
+	company.totals["profit"] = int(company.totals.get("profit", 0)) + int(stats["profit"])
 	company.save_game()
 	return stats
