@@ -1,4 +1,5 @@
 extends Node
+const GraphicsPolicy = preload("res://scripts/graphics_policy_08348.gd")
 ## Local FPS adaptation, cosmetic only. No server commands.
 signal quality_changed(level: int)
 var game: Node2D
@@ -10,6 +11,7 @@ var smoothed_fps := 60.0
 var low_samples := 0
 var high_samples := 0
 var change_cooldown := 0.0
+var thermal_limited := false
 
 func _ready() -> void:
     game = get_parent()
@@ -28,17 +30,13 @@ func _process(delta: float) -> void:
     elapsed = 0.0
     if not auto_enabled:
         return
-    if smoothed_fps < 15.0 and level > 0:
-        apply_quality(0)
-        return
-    if change_cooldown > 0.0:
-        return
+    # Sustained FPS proxy only: no reliable cross-device thermal API here.
+    thermal_limited = false
     low_samples = low_samples + 1 if smoothed_fps < 27.0 else 0
     high_samples = high_samples + 1 if smoothed_fps > 53.0 else 0
-    if low_samples >= 2 and level > 0:
-        apply_quality(level - 1)
-    elif high_samples >= 8 and level < 2:
-        apply_quality(level + 1)
+    var next_level := GraphicsPolicy.decide(level, smoothed_fps, low_samples, high_samples, change_cooldown)
+    if next_level != level:
+        apply_quality(next_level)
 
 func apply_quality(next_level: int) -> void:
     level = clampi(next_level, 0, 2)

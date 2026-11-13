@@ -51,6 +51,8 @@ var terrain_cache_misses := 0
 # Visible static terrain is drawn into persistent per-chunk canvas items.
 # Dynamic plots, selection and MMO overlays remain in main._draw().
 var static_chunk_nodes: Dictionary = {}
+var visible_render_tiles := 0
+var visible_render_buildings := 0
 var chunk_sync_elapsed := 0.0
 var chunk_sync_requested := true
 var last_chunk_camera_position := Vector2.INF
@@ -163,6 +165,8 @@ var tycoon_panel: CanvasLayer
 var performance: Node
 var city_profiler: Node
 var target_zoom := 0.8
+var drag_velocity := Vector2.ZERO
+const CAMERA_DRAG_DAMPING := 16.0
 var camera_debug: Label
 var fps_ui_elapsed := 0.0
 var fps_ui_frames := 0
@@ -342,6 +346,9 @@ func _draw() -> void:
 		detail_budget = 0
 		building_lod = 0
 	var plots := _city_plots()
+	var active_chunks := _active_chunks()
+	visible_render_tiles = 0
+	visible_render_buildings = 0
 	var invested_levels: Dictionary = {}
 	var residential_tiers: Dictionary = {}
 	var urban_metrics: Dictionary = {}
@@ -353,17 +360,19 @@ func _draw() -> void:
 				residential_tiers[key] = clampi(int(district_data.get("residential_tier", 0)), 0, 5)
 				urban_metrics[key] = district_data.get("urban_metrics", {})
 	var opened: Dictionary = {}
-	for id in _active_chunks():
+	for id in active_chunks:
 		opened[id] = true
 	for y in range(visible.position.y, visible.end.y):
 		for x in range(visible.position.x, visible.end.x):
 			var tile := Vector2i(x, y)
 			if not opened.has(Land.chunk_key(tile)):
 				continue
+			visible_render_tiles += 1
 			var static_data := _static_tile_data(tile)
 			var pos: Vector2 = static_data["pos"]
 			var kind: String = static_data["kind"]
 			if COLORS.has(kind):
+				visible_render_buildings += 1
 				_draw_building_lod(pos, kind, tile, building_lod)
 			if not far_lod and bool(static_data["ore"]):
 				draw_circle(pos, 5.0, Color("#c28147"))
@@ -378,9 +387,11 @@ func _draw() -> void:
 			if not far_lod and not urban_metrics.is_empty():
 				var urban_key := "%d:%d" % [floori(float(x) / 16.0), floori(float(y) / 16.0)]
 				CityDetail075.draw_urban_overlay(self, pos, tile, urban_metrics.get(urban_key, {}), detail_budget)
-			if show_available_plots and not far_lod and kind == "Свободный участок" and not plots.has(Land.plot_key(tile)):
+			var plot_id := Land.plot_key(tile)
+			var plot_exists := plots.has(plot_id)
+			if show_available_plots and not far_lod and kind == "Свободный участок" and not plot_exists:
 				draw_polyline(static_data["outline"], Color("#66d5ae"), 1.5)
-			if plots.has(Land.plot_key(tile)):
+			if plot_exists:
 				var built: String = _building_at(tile)
 				if built != "":
 					_draw_building_lod(pos, built, tile, building_lod)
@@ -390,7 +401,6 @@ func _draw() -> void:
 				BuildingArt.draw_preview(self, pos, "НИИ" if construction_preview == "Исследовательский центр" else construction_preview, CityDetail075.district(tile), construction_preview_elapsed)
 			if selected == tile:
 				draw_polyline(static_data["outline"], Color("#ffe175"), 3.0)
-
 	if city_profiler != null:
 		city_profiler.record_draw(Time.get_ticks_usec() - draw_started_us)
 
@@ -431,6 +441,7 @@ func _unhandled_input(event: InputEvent) -> void:
 			moved_since_press = true
 		if touches.size() == 1 and moved_since_press:
 			camera.position -= event.relative / camera.zoom
+			drag_velocity = -event.relative / camera.zoom
 			_clamp_camera()
 		elif touches.size() == 2:
 			var values := touches.values()
@@ -458,7 +469,9 @@ func _unhandled_input(event: InputEvent) -> void:
 			mouse_drag_active = true
 			moved_since_press = true
 		if mouse_drag_active:
-			camera.position -= (event.position - last_mouse) / camera.zoom
+			var step: Vector2 = -(event.position - last_mouse) / camera.zoom
+			camera.position += step
+			drag_velocity = step
 			_clamp_camera()
 		last_mouse = event.position
 	queue_redraw()
@@ -533,13 +546,15 @@ func _clamp_camera() -> void:
 func _process(delta: float) -> void:
 	if camera == null:
 		return
+	# Damp leftover gesture movement without moving the camera after release.
+	drag_velocity = drag_velocity.lerp(Vector2.ZERO, 1.0 - exp(-CAMERA_DRAG_DAMPING * maxf(delta, 0.0)))
 	chunk_sync_elapsed += delta
 	# Update immediately when the camera enters a new tile range, zoom changes,
 	# or Android quality switches. Avoid blank terrain while panning quickly.
 	var quality: int = performance.level if performance != null else 1
 	var camera_changed := camera.position.distance_squared_to(last_chunk_camera_position) > 256.0
 	var zoom_changed := absf(camera.zoom.x - last_chunk_camera_zoom) > 0.005
-	if chunk_sync_requested or quality != last_chunk_quality or zoom_changed or (camera_changed and _visible_tile_rect() != last_chunk_visible) or chunk_sync_elapsed >= 0.25:
+	if chunk_sync_requested or quality != last_chunk_quality or zoom_changed or (camera_changed and _visible_tile_rect() != last_chunk_visible) or chunk_sync_elapsed >= 0.50:
 		chunk_sync_elapsed = 0.0
 		chunk_sync_requested = false
 		_sync_chunk_canvases()
@@ -567,9 +582,9 @@ func _process(delta: float) -> void:
 		fps_ui_elapsed = 0.0
 		fps_ui_frames = 0
 		city_profiler.sample(Engine.get_frames_per_second(), static_chunk_nodes.size(), _active_chunks().size(), _city_plots().size(), get_node("CityLife25D").get_child_count())
-		camera_debug.text = "FPS %d  |  %.1f ms  |  x%.2f  |  LOD %s" % [
+		camera_debug.text = "FPS %d | %.1f ms | x%.2f | LOD %s | кварталы %d | здания %d" % [
 			Engine.get_frames_per_second(), 1000.0 / maxf(Engine.get_frames_per_second(), 1),
-			camera.zoom.x, "дальний" if camera.zoom.x < 0.72 else "обычный"]
+			camera.zoom.x, "дальний" if camera.zoom.x < 0.72 else "обычный", static_chunk_nodes.size(), visible_render_buildings]
 
 func _select_at(screen_position: Vector2) -> void:
 	var world: Vector2 = get_canvas_transform().affine_inverse() * screen_position

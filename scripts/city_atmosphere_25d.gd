@@ -9,6 +9,7 @@ var redraw_clock := 0.0
 var last_camera_position := Vector2.INF
 var last_camera_zoom := Vector2.ZERO
 var last_night_step := -1
+var last_sun_step := -1
 
 func _ready() -> void:
     city = get_parent()
@@ -22,14 +23,16 @@ func _process(delta: float) -> void:
     redraw_clock += delta
     var phase := fposmod(elapsed / 360.0, 1.0)
     var night_step := int(round(clampf((absf(phase - 0.5) - 0.28) * 2.2, 0.0, 0.22) * 32.0))
+    var sun_step := int(round(clampf(1.0 - absf(phase - 0.5) / 0.32, 0.0, 1.0) * 12.0))
     var camera_moved: bool = city.camera.position.distance_squared_to(last_camera_position) > 1.0
     var zoom_changed: bool = not city.camera.zoom.is_equal_approx(last_camera_zoom)
     if weather == 0:
         # Only redraw on camera changes or a visible lighting step.
-        if camera_moved or zoom_changed or night_step != last_night_step:
+        if camera_moved or zoom_changed or night_step != last_night_step or sun_step != last_sun_step:
             last_camera_position = city.camera.position
             last_camera_zoom = city.camera.zoom
             last_night_step = night_step
+            last_sun_step = sun_step
             queue_redraw()
         return
     var period := 0.50 if quality == 0 else 0.25 if quality == 1 else 0.12
@@ -49,6 +52,11 @@ func _draw() -> void:
     var night := float(int(round(clampf((absf(phase - 0.5) - 0.28) * 2.2, 0.0, 0.22) * 32.0))) / 32.0
     if night > 0.01:
         draw_rect(visible, Color(0.07, 0.13, 0.28, night))
+    # Subtle daylight sun halo, world-space and quality bounded.
+    if quality >= 1 and phase > 0.18 and phase < 0.82:
+        var sunlight := clampf(1.0 - absf(phase - 0.5) / 0.32, 0.0, 1.0)
+        var center := visible.position + Vector2(bounds.x * 0.83, bounds.y * 0.17)
+        draw_circle(center, 30.0 if quality == 1 else 45.0, Color(1.0, 0.88, 0.48, 0.05 * sunlight))
     # Clear daylight stays unfiltered. Avoid grey/blue full-screen haze.
     if weather == 0:
         return
