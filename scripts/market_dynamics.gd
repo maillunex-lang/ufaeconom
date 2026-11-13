@@ -52,7 +52,10 @@ static func queue_shipment(company: RefCounted, origin: int, destination: int, g
 	for shipment in company.shipments:
 		if int(shipment["destination"]) == destination:
 			incoming += int(shipment["amount"])
-	if int(to_market["stock"].values().reduce(func(acc, x): return int(acc) + int(x), 0)) + incoming + amount > company.storage_capacity(destination):
+	var occupied := 0
+	for value in to_market["stock"].values():
+		occupied += int(value)
+	if occupied + incoming + amount > company.storage_capacity(destination):
 		return "Недостаточно места на складе назначения"
 	var fee: int = amount * SHIPPING_FEE_PER_UNIT
 	if company.cash < fee:
