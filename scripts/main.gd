@@ -51,10 +51,21 @@ func _static_tile_data(tile: Vector2i) -> Dictionary:
 		return terrain_cache[tile]
 	terrain_cache_misses += 1
 	var kind: String = Land.kind_at(city_index, tile)
+	var pos := _iso(Vector2(tile))
+	var diamond := PackedVector2Array([
+		pos + Vector2(0, -TILE_H * 0.5),
+		pos + Vector2(TILE_W * 0.5, 0),
+		pos + Vector2(0, TILE_H * 0.5),
+		pos + Vector2(-TILE_W * 0.5, 0)
+	])
+	var outline := PackedVector2Array([diamond[0], diamond[1], diamond[2], diamond[3], diamond[0]])
 	var data := {
 		"kind": kind,
 		"tint": CityDetail075.terrain_tint(tile, kind),
-		"ore": kind == "Свободный участок" and Land.has_ore(city_index, tile)
+		"ore": kind == "Свободный участок" and Land.has_ore(city_index, tile),
+		"pos": pos,
+		"diamond": diamond,
+		"outline": outline
 	}
 	if terrain_cache.size() >= TERRAIN_CACHE_LIMIT:
 		terrain_cache.clear()
@@ -287,17 +298,12 @@ func _draw() -> void:
 			var tile := Vector2i(x, y)
 			if not opened.has(Land.chunk_key(tile)):
 				continue
-			var pos := _iso(Vector2(tile))
 			var static_data := _static_tile_data(tile)
+			var pos: Vector2 = static_data["pos"]
 			var kind: String = static_data["kind"]
 			var road := kind == "Дорога"
 			var base: Color = static_data["tint"]
-			var diamond := PackedVector2Array([
-				pos + Vector2(0, -TILE_H * 0.5),
-				pos + Vector2(TILE_W * 0.5, 0),
-				pos + Vector2(0, TILE_H * 0.5),
-				pos + Vector2(-TILE_W * 0.5, 0)
-			])
+			var diamond: PackedVector2Array = static_data["diamond"]
 			draw_colored_polygon(diamond, base)
 			if detail_budget > 0:
 				CityDetail075.draw_ground(self, pos, tile, kind, camera.zoom.x if detail_budget > 1 else 0.8)
@@ -329,7 +335,7 @@ func _draw() -> void:
 				var urban_key := "%d:%d" % [floori(float(x) / 16.0), floori(float(y) / 16.0)]
 				CityDetail075.draw_urban_overlay(self, pos, tile, urban_metrics.get(urban_key, {}), detail_budget)
 			if show_available_plots and not far_lod and kind == "Свободный участок" and not plots.has(Land.plot_key(tile)):
-				draw_polyline(PackedVector2Array([diamond[0],diamond[1],diamond[2],diamond[3],diamond[0]]), Color("#66d5ae"), 1.5)
+				draw_polyline(static_data["outline"], Color("#66d5ae"), 1.5)
 			if plots.has(Land.plot_key(tile)):
 				var built: String = _building_at(tile)
 				if built != "":
@@ -343,7 +349,7 @@ func _draw() -> void:
 			if selected == tile and construction_preview != "" and _owns_plot(tile) and _building_at(tile) == "":
 				BuildingArt.draw_preview(self, pos, "НИИ" if construction_preview == "Исследовательский центр" else construction_preview, CityDetail075.district(tile), construction_preview_elapsed)
 			if selected == tile:
-				draw_polyline(PackedVector2Array([diamond[0], diamond[1], diamond[2], diamond[3], diamond[0]]), Color("#ffe175"), 3.0)
+				draw_polyline(static_data["outline"], Color("#ffe175"), 3.0)
 
 func _draw_road(pos: Vector2, x: int, y: int) -> void:
 	var main_road := x % CityGenerator.ROAD_STEP == 0 or y % CityGenerator.ROAD_STEP == 0
