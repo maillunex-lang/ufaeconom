@@ -4,6 +4,7 @@ class_name EconomySimulator
 ## Deterministic, offline cash-and-inventory simulation for the 0.4 prototype.
 ## All values are WHOLE game rubles and WHOLE goods units.
 ## Prices and capacities below are UNCALIBRATED design hypotheses.
+const Dynamics = preload("res://scripts/market_dynamics.gd")
 const GOODS := {
 	"Зерно": {"buy": 50},
 	"Хлеб": {"sell": 155},
@@ -36,6 +37,7 @@ static func new_market() -> Dictionary:
 		"stock": {"Зерно": 0, "Хлеб": 0, "Молоко": 0},
 		"inventory_cost": {"Зерно": 0, "Хлеб": 0, "Молоко": 0},
 		"supplier_stock": {"Зерно": 0, "Молоко": 0},
+		"prices": Dynamics.new_prices(),
 		"residents_cash": START_CITY_RESIDENTS,
 		"supplier_cash": START_CITY_SUPPLIERS,
 		"city_budget": START_CITY_BUDGET
@@ -99,7 +101,7 @@ static func _sell(company: RefCounted, market: Dictionary, stats: Dictionary, ci
 	if requested <= 0:
 		return 0
 	var stock: Dictionary = market["stock"]
-	var price: int = int(GOODS[good]["sell"])
+	var price: int = Dynamics.price(market, good)
 	var affordable: int = int(int(market["residents_cash"]) / price)
 	var sold: int = mini(requested, mini(int(stock[good]), affordable))
 	if sold <= 0:
@@ -144,8 +146,9 @@ static func step(company: RefCounted) -> Dictionary:
 		company.market(city)
 	var before := monetary_total(company)
 	company.day += 1
+	var shipments_delivered: int = Dynamics.deliver_shipments(company)
 	var stats := {
-		"day": company.day, "revenue": 0, "expenses": 0,
+		"day": company.day, "revenue": 0, "expenses": 0, "shipments_delivered": shipments_delivered,
 		"cogs": 0, "operating_expense": 0, "profit": 0,
 		"produced_bread": 0, "sold_bread": 0, "sold_milk": 0,
 		"unmet_bread": 0, "unmet_milk": 0, "blocked": 0,
@@ -224,6 +227,8 @@ static func step(company: RefCounted) -> Dictionary:
 			var milk_requested: int = mini(milk_demand, open_shops * STORE_MILK_PER_DAY)
 			result["sold_bread"] = _sell(company, market, stats, result, "Хлеб", bread_requested)
 			result["sold_milk"] = _sell(company, market, stats, result, "Молоко", milk_requested)
+		Dynamics.adjust_price(market, "Хлеб", bread_demand, int(result["sold_bread"]))
+		Dynamics.adjust_price(market, "Молоко", milk_demand, int(result["sold_milk"]))
 		result["profit"] = int(result["revenue"]) - int(result["cogs"]) - int(result["operating_expense"])
 		stats["produced_bread"] = int(stats["produced_bread"]) + int(result["produced_bread"])
 		stats["sold_bread"] = int(stats["sold_bread"]) + int(result["sold_bread"])
