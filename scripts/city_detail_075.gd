@@ -92,3 +92,34 @@ static func draw_investment(canvas: Node2D, pos: Vector2, tile: Vector2i, kind: 
         if level >= 4 and budget >= 2:
             canvas.draw_line(pos + Vector2(27, -6), pos + Vector2(27, -20), Color("#6b8580"), 1.5)
             canvas.draw_circle(pos + Vector2(27, -21), 3.0, Color("#ffe6a5"))
+
+static func draw_residential_growth(canvas: Node2D, pos: Vector2, tile: Vector2i, kind: String, tier: int, budget: int) -> void:
+    # Decorative infill, not a new owned/constructible building.
+    if budget <= 0 or tier <= 0:
+        return
+    if kind == "Жилой дом" and budget >= 2:
+        var height := 5.0 + float(tier) * 2.0
+        canvas.draw_rect(Rect2(pos + Vector2(-10, -42 - height), Vector2(20, height)), Color("#c4b9a4"))
+        for n in range(tier):
+            canvas.draw_rect(Rect2(pos + Vector2(-7 + (n % 3) * 5, -39 - height), Vector2(2, 3)), Color("#f7e0a0"))
+    elif kind == "Свободный участок" and tier >= 2 and posmod(tile.x * 19 + tile.y * 23, 23) < tier:
+        canvas.draw_rect(Rect2(pos + Vector2(-8, -9), Vector2(16, 10)), Color("#cbbda7"))
+        canvas.draw_colored_polygon(PackedVector2Array([
+            pos + Vector2(-11, -9), pos + Vector2(0, -18),
+            pos + Vector2(11, -9)]), Color("#876d62"))
+        if budget >= 2:
+            canvas.draw_rect(Rect2(pos + Vector2(-3, -6), Vector2(4, 4)), Color("#f8dda0"))
+
+
+static func draw_neighborhood_amenities(canvas: Node2D, pos: Vector2, tile: Vector2i, kind: String, tier: int, budget: int) -> void:
+    if budget <= 0 or tier <= 0:
+        return
+    if kind == "Свободный участок" and tier >= 3 and posmod(tile.x * 11 + tile.y * 31, 17) == 0:
+        canvas.draw_rect(Rect2(pos + Vector2(-18, 6), Vector2(27, 3)), Color("#b6ad91"))
+        canvas.draw_circle(pos + Vector2(-16, 1), 5.0, Color("#4c9361"))
+        canvas.draw_circle(pos + Vector2(9, -2), 6.0, Color("#4c9361"))
+        if budget >= 2:
+            canvas.draw_rect(Rect2(pos + Vector2(-4, 0), Vector2(10, 3)), Color("#8e745b"))
+    if kind == "Дорога" and tier >= 4 and posmod(tile.x * 7 + tile.y, 11) == 0:
+        canvas.draw_line(pos + Vector2(-26, 1), pos + Vector2(-26, -17), Color("#87958c"), 2.0)
+        canvas.draw_circle(pos + Vector2(-26, -18), 3.0, Color("#ffdfa4"))

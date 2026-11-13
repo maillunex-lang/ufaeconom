@@ -1424,6 +1424,10 @@ def district_demand(w: dict, actor: str) -> list[dict]:
                                city, tuple(map(int, district.split(":"))), w),
                            "infrastructure": _district_infrastructure(
                                w, city, tuple(map(int, district.split(":")))),
+                           "residential_tier": min(5, _district_population(
+                               city, tuple(map(int, district.split(":"))), w) // 750),
+                           "population_trend": max(-8, min(8, (
+                               _district_infrastructure(w, city, tuple(map(int, district.split(":"))))["attractiveness"] - 50) // 8)),
                            "competition_level": "high" if data["shops"] >= 3 else
                                                 "medium" if data["shops"] >= 2 else "low"})
     return result

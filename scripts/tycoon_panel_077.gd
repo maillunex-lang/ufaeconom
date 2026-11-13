@@ -299,6 +299,8 @@ func refresh() -> void:
                 int(district.get("synthetic_population", 0)),
                 int(district.get("shops", 0)), int(district.get("factories", 0)),
                 int(district.get("estimated_bread_demand_per_tick", 0))]
+            labels[8].text += "\n  Жилая застройка %d/5 • изменение населения %+d/мес." % [
+                int(district.get("residential_tier", 0)), int(district.get("population_trend", 0))]
             labels[8].text += "\n  Привлекательность %d/100 • дороги %d • жилые участки %d • инвестиции %d/5" % [
                 int(infra.get("attractiveness", 0)), int(infra.get("roads", 0)),
                 int(infra.get("housing_tiles", 0)), int(infra.get("investment_level", 0))]
