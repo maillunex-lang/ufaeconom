@@ -11,6 +11,8 @@ const CompanyState = preload("res://scripts/company_state.gd")
 const Calendar = preload("res://scripts/game_calendar.gd")
 const MMOPanel = preload("res://scripts/mmo_panel.gd")
 const AndroidHUD074 = preload("res://scripts/android_hud_074.gd")
+const SmartCity076 = preload("res://scripts/smart_city_076.gd")
+const AndroidPerformance076 = preload("res://scripts/android_performance_076.gd")
 const TILE_W := 96.0
 const TILE_H := 48.0
 const MAP_SIZE := 32
@@ -49,6 +51,7 @@ var visual_quality := 1
 var construction_preview := ""
 var visual_detail := 1
 var android_hud: CanvasLayer
+var performance: Node
 
 func _ready() -> void:
 	camera = Camera2D.new()
@@ -74,6 +77,9 @@ func _ready() -> void:
 	android_hud.name = "AndroidHUD074"
 	add_child(android_hud)
 	android_hud.attach_legacy()
+	performance = AndroidPerformance076.new()
+	performance.name = "AndroidPerformance076"
+	add_child(performance)
 	if int(catchup["advanced"]) > 0:
 		message_label.text = "Пока вас не было, прошло %d игровых дней" % int(catchup["advanced"])
 	day_timer = Timer.new()
@@ -309,6 +315,7 @@ func _update_actions() -> void:
 	_refresh_economy_ui()
 	if android_hud != null:
 		android_hud.update_values()
+		android_hud.update_business()
 	for child in actions.get_children():
 		actions.remove_child(child)
 		child.queue_free()
