@@ -29,6 +29,9 @@ func _draw() -> void:
     var night := clampf((absf(phase - 0.5) - 0.24) * 3.0, 0.0, 0.50)
     if night > 0.01:
         draw_rect(visible, Color(0.07, 0.13, 0.28, night))
+    elif quality >= 1:
+        # A very light warm daylight tint; one rectangle, no post-processing pass.
+        draw_rect(visible, Color(0.97, 0.78, 0.49, 0.025))
     if weather == 0:
         return
     var count := 18 if quality == 0 else 42 if quality == 1 else 75

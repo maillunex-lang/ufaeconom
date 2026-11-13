@@ -11,15 +11,31 @@ static func level(tile: Vector2i, kind: String) -> int:
 static func detail_for_zoom(zoom: float) -> int:
     return 0 if zoom < 0.55 else 1 if zoom < 1.05 else 2
 
+static func terrain_tint(tile: Vector2i, kind: String) -> Color:
+    if kind == "Дорога":
+        return Color("#58636a")
+    var seed := posmod(tile.x * 37 + tile.y * 73 + tile.x * tile.y * 3, 11)
+    return [Color("#7f9f79"), Color("#86a780"), Color("#789b76"), Color("#8ca981")][seed % 4]
+
+
+static func detail_budget(zoom: float, quality: int) -> int:
+    if zoom < 0.72:
+        return 0
+    if quality <= 0:
+        return 1
+    return 2 if zoom >= 1.05 and quality >= 2 else 1
+
+
 static func draw_ground(canvas: Node2D, pos: Vector2, tile: Vector2i, kind: String, zoom: float) -> void:
     var detail := detail_for_zoom(zoom)
     if kind == "Дорога":
         if detail >= 1:
-            var edge := Color("#bdc7bb")
+            var edge := Color("#a5b2ae")
             canvas.draw_line(pos + Vector2(-45, -2), pos + Vector2(-3, 19), edge, 2.0)
             canvas.draw_line(pos + Vector2(3, 19), pos + Vector2(45, -2), edge, 2.0)
         if detail >= 2 and posmod(tile.x + tile.y, 3) == 0:
             canvas.draw_circle(pos + Vector2(29, -9), 2.0, Color("#e6dfbc"))
+            canvas.draw_line(pos + Vector2(-31,-8),pos + Vector2(-20,-3),Color("#a9b3b1"),1.0)
     elif kind == "Дерево":
         if detail >= 1:
             canvas.draw_circle(pos + Vector2(22, 6), 5, Color("#477c58"))

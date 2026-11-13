@@ -2,13 +2,13 @@ extends RefCounted
 ## BUSINESS EMPIRE ONLINE: original procedural 2.5D buildings.
 ## Appearance only; no local ownership, production or construction decisions.
 const COLORS := {
-    "Жилой дом": Color("#d4b8a0"),
-    "Магазин": Color("#61a9bc"),
-    "Завод": Color("#8998aa"),
-    "Склад": Color("#bd9870"),
-    "Офис": Color("#819ec0"),
-    "НИИ": Color("#a5a0cc"),
-    "Автосалон": Color("#caab70"),
+    "Жилой дом": Color("#d5c9b5"),
+    "Магазин": Color("#719fa9"),
+    "Завод": Color("#87939b"),
+    "Склад": Color("#b6a48b"),
+    "Офис": Color("#819eae"),
+    "НИИ": Color("#99a6b3"),
+    "Автосалон": Color("#b8a88d"),
     "Шахта": Color("#867e75"),
 }
 static func palette(kind: String, district: int) -> Color:
@@ -29,15 +29,27 @@ static func draw(canvas: Node2D, pos: Vector2, kind: String, level: int = 1, bui
     var front := pos + Vector2(0,4)
     var right := pos + Vector2(spread,-12)
     var rise := Vector2(0,-height)
-    canvas.draw_colored_polygon(PackedVector2Array([left,front,front+rise,left+rise]),shade.darkened(0.22))
-    canvas.draw_colored_polygon(PackedVector2Array([front,right,right+rise,front+rise]),shade.darkened(0.08))
-    canvas.draw_colored_polygon(PackedVector2Array([left+rise,front+rise,right+rise,pos+Vector2(0,-height-27)]),shade.lightened(0.22))
+    canvas.draw_colored_polygon(PackedVector2Array([left,front,front+rise,left+rise]),shade.darkened(0.31))
+    canvas.draw_colored_polygon(PackedVector2Array([front,right,right+rise,front+rise]),shade.darkened(0.15))
+    canvas.draw_colored_polygon(PackedVector2Array([left+rise,front+rise,right+rise,pos+Vector2(0,-height-27)]),shade.lightened(0.16))
+    # Roof parapet and edge highlight reinforce depth without textures or shaders.
+    canvas.draw_line(left+rise, pos+Vector2(0,-height-27), shade.lightened(0.39), 1.2)
+    canvas.draw_line(pos+Vector2(0,-height-27), right+rise, shade.darkened(0.13), 1.2)
+    canvas.draw_line(front, front+rise, Color("#dce6e2"), 1.1)
+    if kind in ["Офис", "НИИ", "Жилой дом"]:
+        canvas.draw_rect(Rect2(pos + Vector2(-9,-height-14), Vector2(14,4)), Color("#647982"))
+    if kind in ["Завод", "Склад"]:
+        for seam in range(2):
+            var yy := -height + 13.0 + seam * 12.0
+            canvas.draw_line(pos+Vector2(4,yy),pos+Vector2(19,yy+2),shade.lightened(0.23),1.0)
     # Floor glazing: stripes remain visible at small Android screen sizes.
     if kind in ["Офис","НИИ","Жилой дом"]:
         for floor in range(floor_count):
             var yy := -height + 11.0 + float(floor) * 12.0
-            canvas.draw_rect(Rect2(pos + Vector2(-18,yy),Vector2(8,6)),Color("#e0eaf0"))
-            canvas.draw_rect(Rect2(pos + Vector2(4,yy),Vector2(8,6)),Color("#bfdbe6"))
+            canvas.draw_rect(Rect2(pos + Vector2(-18,yy),Vector2(8,6)),Color("#b8d0d7"))
+            canvas.draw_rect(Rect2(pos + Vector2(4,yy),Vector2(8,6)),Color("#85aebc"))
+            canvas.draw_line(pos + Vector2(-14,yy),pos + Vector2(-14,yy+6),Color("#506e7a"),1.0)
+            canvas.draw_line(pos + Vector2(8,yy),pos + Vector2(8,yy+6),Color("#506e7a"),1.0)
     if kind in ["Магазин","Автосалон"]:
         canvas.draw_colored_polygon(PackedVector2Array([
             pos+Vector2(-23,-height+23), pos+Vector2(0,-height+28),

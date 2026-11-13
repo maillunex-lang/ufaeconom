@@ -225,9 +225,10 @@ func _draw() -> void:
 	var b: Vector2 = inverse * Vector2(viewport_size.x, 0)
 	var c: Vector2 = inverse * viewport_size
 	var d: Vector2 = inverse * Vector2(0, viewport_size.y)
-	draw_colored_polygon(PackedVector2Array([a, b, c, d]), Color("#729b79"))
+	draw_colored_polygon(PackedVector2Array([a, b, c, d]), Color("#789a78"))
 	var visible := _visible_tile_rect()
-	var far_lod := camera.zoom.x < 0.72
+	var detail_budget := CityDetail075.detail_budget(camera.zoom.x, performance.level if performance != null else 1)
+	var far_lod := detail_budget == 0
 	var plots := _city_plots()
 	var opened: Dictionary = {}
 	for id in _active_chunks():
@@ -240,9 +241,7 @@ func _draw() -> void:
 			var pos := _iso(Vector2(tile))
 			var kind: String = Land.kind_at(city_index, tile)
 			var road := kind == "Дорога"
-			var base := Color("#6e777b") if road else Color("#88b98c")
-			if not road and (x + y) % 4 == 0:
-				base = Color("#80af83")
+			var base := CityDetail075.terrain_tint(tile, kind)
 			var diamond := PackedVector2Array([
 				pos + Vector2(0, -TILE_H * 0.5),
 				pos + Vector2(TILE_W * 0.5, 0),
@@ -250,16 +249,16 @@ func _draw() -> void:
 				pos + Vector2(-TILE_W * 0.5, 0)
 			])
 			draw_colored_polygon(diamond, base)
-			if not far_lod:
-				CityDetail075.draw_ground(self, pos, tile, kind, camera.zoom.x)
-			if not far_lod:
+			if detail_budget > 0:
+				CityDetail075.draw_ground(self, pos, tile, kind, camera.zoom.x if detail_budget > 1 else 0.8)
+			if detail_budget > 1:
 				draw_polyline(PackedVector2Array([diamond[0], diamond[1], diamond[2], diamond[3], diamond[0]]), Color("#527b61"), 0.8)
 			if road:
 				if not far_lod:
 					_draw_road(pos, x, y)
 			elif kind == "Дерево":
 				if not far_lod:
-					_draw_tree(pos)
+					_draw_tree(pos, tile, detail_budget)
 			elif COLORS.has(kind):
 				if not far_lod:
 					CityDetail075.draw_building_shadow(self, pos, tile, camera.zoom.x)
@@ -284,15 +283,38 @@ func _draw() -> void:
 				draw_polyline(PackedVector2Array([diamond[0], diamond[1], diamond[2], diamond[3], diamond[0]]), Color("#ffe175"), 3.0)
 
 func _draw_road(pos: Vector2, x: int, y: int) -> void:
+	var main_road := x % CityGenerator.ROAD_STEP == 0 or y % CityGenerator.ROAD_STEP == 0
+	if not main_road:
+		return
 	if x % CityGenerator.ROAD_STEP == 0 and y % CityGenerator.ROAD_STEP != 0:
-		draw_line(pos + Vector2(-9, -4), pos + Vector2(9, 4), Color("#e1d9b1"), 1.4)
+		draw_line(pos + Vector2(-19, -9), pos + Vector2(19, 9), Color("#a3b0ae"), 2.0)
+		if y % 3 == 0:
+			draw_line(pos + Vector2(-6, -3), pos + Vector2(6, 3), Color("#d8cfac"), 1.4)
 	elif y % CityGenerator.ROAD_STEP == 0 and x % CityGenerator.ROAD_STEP != 0:
-		draw_line(pos + Vector2(9, -4), pos + Vector2(-9, 4), Color("#e1d9b1"), 1.4)
+		draw_line(pos + Vector2(19, -9), pos + Vector2(-19, 9), Color("#a3b0ae"), 2.0)
+		if x % 3 == 0:
+			draw_line(pos + Vector2(6, -3), pos + Vector2(-6, 3), Color("#d8cfac"), 1.4)
+	else:
+		for offset in [-8.0, 0.0, 8.0]:
+			draw_line(pos+Vector2(offset-7,-6),pos+Vector2(offset+7,0),Color("#b7c0bb"),2.0)
 
-func _draw_tree(pos: Vector2) -> void:
-	draw_line(pos, pos + Vector2(0, -24), Color("#72573b"), 5.0)
-	draw_circle(pos + Vector2(0, -29), 15, Color("#3e8153"))
-	draw_circle(pos + Vector2(-6, -34), 9, Color("#58a46a"))
+
+func _draw_tree(pos: Vector2, tile: Vector2i, budget: int) -> void:
+	var variant := posmod(tile.x * 17 + tile.y * 29, 5)
+	var crown := 12.0 + float(variant)
+	draw_ellipse_shadow(pos, crown)
+	draw_line(pos, pos + Vector2(0, -23), Color("#695b48"), 4.0)
+	draw_circle(pos + Vector2(0, -27), crown, Color("#365f49"))
+	draw_circle(pos + Vector2(-5, -32), crown * 0.75, Color("#4e8261"))
+	if budget > 1:
+		draw_circle(pos + Vector2(4, -36), crown * 0.45, Color("#6c9a70"))
+
+
+func draw_ellipse_shadow(pos: Vector2, radius: float) -> void:
+	draw_colored_polygon(PackedVector2Array([
+		pos+Vector2(-radius,2),pos+Vector2(0,6),
+		pos+Vector2(radius+7,4),pos+Vector2(5,-1)
+	]), Color(0.12,0.24,0.18,0.22))
 
 func _draw_building(pos: Vector2, kind: String, tile: Vector2i) -> void:
 	# Procedural visual level does not affect production, land ownership or server state.
