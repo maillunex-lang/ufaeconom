@@ -14,6 +14,8 @@ func _ready() -> void:
     z_index = 10
 
 func _process(delta: float) -> void:
+    if city == null or city.camera == null or city.camera.zoom.x < 0.72:
+        return
     clock += delta
     redraw_clock += delta
     if redraw_clock >= (0.24 if detail_quality == 0 else 0.12 if detail_quality == 1 else 0.08):
