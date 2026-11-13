@@ -51,6 +51,10 @@ WAGE_MINOR = 750
 MAX_PRODUCTION_BATCH = 4
 
 TRANSPORT_CAPACITY = 50
+NPC_OWNERS = ("npc", "npc_auto")
+NPC_MAX_BUILDINGS = 6
+NPC_DECISION_INTERVAL = TICKS_PER_DAY
+NPC_BUILD_INTERVAL = TICKS_PER_MONTH
 
 
 class EconomyError(ValueError):
@@ -119,6 +123,8 @@ def new_world(epoch_unix: int = 1800000000) -> dict:
         audit[good]["initial"] = goods_total(w)[good]
     w["initial_money"] = money_total(w)
     land.ensure_world(w)
+    w["npc_decisions"] = []
+    w["npc_next_action"] = NPC_DECISION_INTERVAL
     return w
 
 
@@ -149,13 +155,15 @@ def migrate_industry(w: dict) -> None:
         fac["prices"].setdefault("car", BASE_PRICES["car"])
     w.setdefault("contracts", {})
     w.setdefault("next_contract", 1)
+    w.setdefault("npc_decisions", [])
+    w.setdefault("npc_next_action", NPC_DECISION_INTERVAL)
 
 
 def register_company(w: dict, actor: str, city: str = "ufa") -> None:
     """Admin-only onboarding. A finite central development pool funds starters."""
     if (not isinstance(actor, str) or
             re.fullmatch(r"[a-z][a-z0-9_-]{2,24}", actor) is None or
-            actor == "npc" or city not in CITIES or
+            actor in NPC_OWNERS or city not in CITIES or
             "company:" + actor in w["wallets"]):
         raise EconomyError("invalid new company")
     opening = 200_000_000
@@ -247,6 +255,10 @@ def audit_world(w: dict) -> bool:
                     - a["converted_in"] - a["consumed"])
         if stock[good] != expected:
             return False
+    if (type(w.get("npc_next_action", NPC_DECISION_INTERVAL)) is not int or
+            w.get("npc_next_action", NPC_DECISION_INTERVAL) < 1 or
+            len(w.get("npc_decisions", [])) > 80):
+        return False
     for fac in w["facilities"].values():
         staff = fac.get("workers", STAFF_BASE[fac["kind"]])
         wage = fac.get("wage_minor", WAGE_MINOR)
@@ -542,6 +554,9 @@ def advance(w: dict, ticks: int = 1) -> None:
         if w["tick"] % TICKS_PER_DAY == 0:
             _npc_reprice(w)
         _retail(w)
+        if w["tick"] >= w.get("npc_next_action", NPC_DECISION_INTERVAL):
+            _npc_decide(w)
+            w["npc_next_action"] = w["tick"] + NPC_DECISION_INTERVAL
         if w["tick"] % TICKS_PER_MONTH == 0:
             _close_month(w)
         w["revision"] += 1
@@ -553,8 +568,147 @@ def due_ticks(w: dict, server_now_unix: int) -> int:
     return max(0, (server_now_unix - w["epoch_unix"]) // TICK_SECONDS - w["tick"])
 
 
+def _accept_contract(w: dict, actor: str, ident: str, destination_id: str) -> dict:
+    contract = w["contracts"].get(ident) if type(ident) is str else None
+    dest = w["facilities"].get(destination_id) if type(destination_id) is str else None
+    if (contract is None or contract["status"] != "offered" or
+            contract["seller"] == actor or dest is None or dest["owner"] != actor):
+        raise EconomyError("invalid contract acceptance")
+    source = w["facilities"].get(contract["from"])
+    if source is None or source["owner"] != contract["seller"]:
+        raise EconomyError("seller facility unavailable")
+    quantity, good = contract["quantity"], contract["good"]
+    total = quantity * contract["price_minor"]
+    fee = shipment_fee(route_km(source["city"], dest["city"]), quantity)
+    if (source["stock"][good] < quantity or
+            sum(dest["stock"].values()) + _inbound(w, dest["id"]) + quantity > dest["capacity"] or
+            w["wallets"]["company:" + actor] < total + fee):
+        raise EconomyError("insufficient contract resources")
+    escrow = "escrow:" + ident
+    w["wallets"][escrow] = 0
+    _money(w, "company:" + actor, escrow, total, "contract.escrow", ident)
+    _money(w, "company:" + actor, "suppliers:" + source["city"], fee, "freight", ident)
+    basis = _take(source, good, quantity)
+    eta = w["tick"] + eta_ticks(route_km(source["city"], dest["city"]))
+    w["shipments"].append({"id": "s" + str(w["next_shipment"]), "owner": actor,
+        "from": source["id"], "to": dest["id"], "good": good,
+        "amount": quantity, "basis": total, "seller_basis": basis, "eta_tick": eta,
+        "contract_id": ident, "status": "in_transit"})
+    w["next_shipment"] += 1
+    contract.update({"buyer": actor, "to": dest["id"], "status": "in_transit", "eta_tick": eta})
+    return {"ok": True, "contract_id": ident, "eta_tick": eta, "fee_minor": fee}
+
+
+def _npc_event(w: dict, owner: str, action: str, detail: str) -> None:
+    events = w.setdefault("npc_decisions", [])
+    events.append({"tick": w["tick"], "owner": owner, "action": action, "detail": detail})
+    del events[:-80]
+
+
+def _npc_build(w: dict, owner: str, city: str, kind: str) -> bool:
+    owned = [f for f in w["facilities"].values() if f["owner"] == owner]
+    if len(owned) >= NPC_MAX_BUILDINGS:
+        return False
+    layout = w["land"][city]
+    position = land.free_plot(city, layout["chunks"], layout["plots"], kind == "mine")
+    price = BUILD_COSTS[kind] + land.LAND_PRICE
+    if position is None or w["wallets"]["company:" + owner] < price + 20_000_000:
+        return False
+    x, y = position
+    key = land.key(x, y)
+    ident = owner + "-autobuilt-" + str(w["next_facility"])
+    _money(w, "company:" + owner, "treasury:" + city, land.LAND_PRICE,
+           "land.purchase", key)
+    _money(w, "company:" + owner, "suppliers:" + city, BUILD_COSTS[kind],
+           "construction", ident)
+    w["next_facility"] += 1
+    layout["plots"][key] = {"owner": owner, "building": ident}
+    fac = _facility(owner, city, kind, ident)
+    fac["plot"] = {"x": x, "y": y}
+    w["facilities"][ident] = fac
+    land.grow(city, layout["chunks"], layout["plots"], x, y)
+    _npc_event(w, owner, "construction", kind + ":" + city)
+    return True
+
+
+def _npc_decide(w: dict) -> None:
+    """Bounded deterministic decisions, authoritative server only, no LLM."""
+    if "company:npc_auto" not in w["wallets"]:
+        # Finite subsidy from treasury, not money creation.
+        w["wallets"]["company:npc_auto"] = 0
+        w["company_metrics"]["npc_auto"] = {"revenue": 0, "cogs": 0,
+            "operating_expense": 0, "freight": 0, "capital_expenditure": 0,
+            "profit": 0}
+        _money(w, "treasury:central", "company:npc_auto",
+               160_000_000, "company.starter_grant", "npc_auto")
+        _npc_event(w, "npc_auto", "entry", "new competitor")
+    for owner in NPC_OWNERS:
+        own = sorted((f for f in w["facilities"].values() if f["owner"] == owner),
+                     key=lambda f: f["id"])
+        if not own and owner == "npc_auto":
+            _npc_build(w, owner, "tuymazy", "factory")
+            _npc_build(w, owner, "tuymazy", "shop")
+            own = sorted((f for f in w["facilities"].values() if f["owner"] == owner),
+                         key=lambda f: f["id"])
+        for fac in own:
+            if fac["kind"] == "factory":
+                if fac["stock"]["grain"] < 8:
+                    amount = _buy(w, fac, "grain", 12)
+                    if amount:
+                        _npc_event(w, owner, "purchase", str(amount) + " grain")
+                fac["production_target"] = min(2, MAX_PRODUCTION_BATCH)
+                fac["workers"] = 8
+            if fac["kind"] == "shop":
+                for good in ("bread", "milk", "flour"):
+                    rivals = [f["prices"][good] for f in w["facilities"].values()
+                              if f["city"] == fac["city"] and f["kind"] == "shop"
+                              and f["owner"] not in NPC_OWNERS and f["stock"][good] > 0]
+                    if rivals:
+                        target = min(rivals) - 100
+                        floor = BASE_PRICES[good] * 7 // 10
+                        ceiling = BASE_PRICES[good] * 3 // 2
+                        old = fac["prices"][good]
+                        step = max(1, old // 100)
+                        fac["prices"][good] = max(floor, min(ceiling,
+                            old + max(-step, min(step, target - old))))
+        # NPC may buy only competitively priced real player offers.
+        dest = next((f for f in own if f["kind"] in ("factory", "shop", "warehouse")), None)
+        if dest:
+            for contract in sorted(w["contracts"].values(), key=lambda c: c["id"]):
+                if (contract["status"] != "offered" or
+                        contract["seller"] in NPC_OWNERS or
+                        contract["good"] not in ("grain", "flour", "bread") or
+                        contract["price_minor"] > BASE_PRICES[contract["good"]]):
+                    continue
+                try:
+                    _accept_contract(w, owner, contract["id"], dest["id"])
+                except EconomyError:
+                    continue
+                _npc_event(w, owner, "contract.buy", contract["id"])
+                break
+        # NPC offers small real stock lots; bounded open offers.
+        open_offers = [c for c in w["contracts"].values()
+                       if c["seller"] == owner and c["status"] == "offered"]
+        if len(open_offers) < 2:
+            source = next((f for f in own if f["stock"]["bread"] >= 4), None)
+            if source:
+                ident = "c" + str(w["next_contract"])
+                w["next_contract"] += 1
+                w["contracts"][ident] = {"id": ident, "seller": owner, "buyer": "",
+                    "from": source["id"], "to": "", "good": "bread",
+                    "quantity": 4, "price_minor": BASE_PRICES["bread"],
+                    "status": "offered"}
+                _npc_event(w, owner, "contract.offer", ident)
+        # Once per game month, expand only if budget and cap allow.
+        if w["tick"] % NPC_BUILD_INTERVAL == 0 and len(own) < NPC_MAX_BUILDINGS:
+            kinds = [f["kind"] for f in own]
+            kind = "shop" if kinds.count("factory") > kinds.count("shop") else "factory"
+            city = "sterlitamak" if owner == "npc_auto" else "tuymazy"
+            _npc_build(w, owner, city, kind)
+
+
 def apply_command(w: dict, actor: str, command: dict) -> dict:
-    if not isinstance(actor, str) or actor == "npc" or "company:" + actor not in w["wallets"]:
+    if not isinstance(actor, str) or actor in NPC_OWNERS or "company:" + actor not in w["wallets"]:
         raise EconomyError("unknown actor")
     command_id = command.get("command_id")
     if not isinstance(command_id, str) or not (8 <= len(command_id) <= 120):
@@ -633,35 +787,8 @@ def apply_command(w: dict, actor: str, command: dict) -> dict:
             "price_minor": price, "status": "offered"}
         result = {"ok": True, "contract_id": ident}
     elif kind == "contract.accept":
-        ident, destination_id = command.get("contract_id"), command.get("destination_id")
-        contract = w["contracts"].get(ident) if type(ident) is str else None
-        dest = w["facilities"].get(destination_id) if type(destination_id) is str else None
-        if (contract is None or contract["status"] != "offered" or
-                contract["seller"] == actor or dest is None or dest["owner"] != actor):
-            raise EconomyError("invalid contract acceptance")
-        source = w["facilities"].get(contract["from"])
-        if source is None or source["owner"] != contract["seller"]:
-            raise EconomyError("seller facility unavailable")
-        quantity, good = contract["quantity"], contract["good"]
-        total = quantity * contract["price_minor"]
-        fee = shipment_fee(route_km(source["city"], dest["city"]), quantity)
-        if (source["stock"][good] < quantity or
-                sum(dest["stock"].values()) + _inbound(w, dest["id"]) + quantity > dest["capacity"] or
-                w["wallets"]["company:" + actor] < total + fee):
-            raise EconomyError("insufficient contract resources")
-        escrow = "escrow:" + ident
-        w["wallets"][escrow] = 0
-        _money(w, "company:" + actor, escrow, total, "contract.escrow", ident)
-        _money(w, "company:" + actor, "suppliers:" + source["city"], fee, "freight", ident)
-        basis = _take(source, good, quantity)
-        eta = w["tick"] + eta_ticks(route_km(source["city"], dest["city"]))
-        w["shipments"].append({"id": "s" + str(w["next_shipment"]), "owner": actor,
-            "from": source["id"], "to": dest["id"], "good": good,
-            "amount": quantity, "basis": total, "seller_basis": basis, "eta_tick": eta,
-            "contract_id": ident, "status": "in_transit"})
-        w["next_shipment"] += 1
-        contract.update({"buyer": actor, "to": dest["id"], "status": "in_transit", "eta_tick": eta})
-        result = {"ok": True, "contract_id": ident, "eta_tick": eta, "fee_minor": fee}
+        result = _accept_contract(w, actor, command.get("contract_id"),
+                                  command.get("destination_id"))
     elif kind == "facility.set_price":
         good = command.get("good")
         price = command.get("price_minor")
@@ -779,7 +906,7 @@ def apply_command(w: dict, actor: str, command: dict) -> dict:
 
 
 def snapshot(w: dict, actor: str) -> dict:
-    if (not isinstance(actor, str) or actor == "npc" or
+    if (not isinstance(actor, str) or actor in NPC_OWNERS or
             "company:" + actor not in w["wallets"]):
         raise EconomyError("unknown actor")
     own = {fid: copy.deepcopy(fac) for fid, fac in w["facilities"].items()
@@ -808,6 +935,13 @@ def snapshot(w: dict, actor: str) -> dict:
         "land": public_land,
         "shipments": copy.deepcopy([s for s in w["shipments"] if s["owner"] == actor]),
         "market": market, "stats": copy.deepcopy(w["stats"]),
+        "npc_competitors": [{"owner": owner,
+            "facilities": sum(1 for f in w["facilities"].values() if f["owner"] == owner),
+            "cash_minor": w["wallets"].get("company:" + owner, 0),
+            "latest_action": next((ev["action"] + ": " + ev["detail"]
+                for ev in reversed(w.get("npc_decisions", [])) if ev["owner"] == owner), "")}
+            for owner in NPC_OWNERS if "company:" + owner in w["wallets"]],
+        "npc_activity": copy.deepcopy(w.get("npc_decisions", [])[-12:]),
         "company_metrics": copy.deepcopy(w["company_metrics"][actor]),
         "finance_history": [
             copy.deepcopy(entry) for entry in w.get("finance_history", [])[-100:]
