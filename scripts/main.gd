@@ -1,6 +1,7 @@
 extends Node2D
 ## Offline calendar prototype: 24 real hours = 30 game days, catch-up on load.
 const SafeArea = preload("res://scripts/mobile_safe_area.gd")
+const Land = preload("res://scripts/city_land.gd")
 const CityGenerator = preload("res://scripts/city_generator.gd")
 const CompanyState = preload("res://scripts/company_state.gd")
 const Calendar = preload("res://scripts/game_calendar.gd")
@@ -13,7 +14,10 @@ const COLORS := {
 	"Магазин": Color("#5e9fb8"),
 	"Склад": Color("#b18d64"),
 	"Завод": Color("#8595a2"),
-	"Офис": Color("#a9bfc9")
+	"Офис": Color("#a9bfc9"),
+	"Шахта": Color("#b48b57"),
+	"Исследовательский центр": Color("#9a91d3"),
+	"Автосалон": Color("#62b9c8")
 }
 
 var company = CompanyState.new()
@@ -45,6 +49,8 @@ func _ready() -> void:
 	_build_ui()
 	mmo_panel = MMOPanel.new()
 	add_child(mmo_panel)
+	mmo_panel.client.snapshot_ready.connect(_on_world_snapshot)
+	mmo_panel.client.disconnected.connect(_on_world_logout)
 	company.load_game()
 	var catchup: Dictionary = company.sync_calendar(int(Time.get_unix_time_from_system()))
 	_load_city(company.city_index)
@@ -80,7 +86,7 @@ func _build_ui() -> void:
 	safe.call_deferred("refresh")
 	var title := Label.new()
 	title.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	title.text = "BUSINESS EMPIRE ONLINE • 0.7 BETA"
+	title.text = "BUSINESS EMPIRE ONLINE • ГОРОДСКИЕ КВАРТАЛЫ"
 	content.add_child(title)
 	city_label = Label.new()
 	city_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -101,6 +107,16 @@ func _build_ui() -> void:
 	button.text = "Следующий город"
 	button.pressed.connect(func() -> void: _load_city(city_index + 1))
 	content.add_child(button)
+	var find_plot := Button.new()
+	find_plot.text = "Найти свободный участок"
+	find_plot.custom_minimum_size.y = 48.0
+	find_plot.pressed.connect(_find_free_plot)
+	content.add_child(find_plot)
+	var find_ore := Button.new()
+	find_ore.text = "Найти месторождение"
+	find_ore.custom_minimum_size.y = 48.0
+	find_ore.pressed.connect(_find_free_plot.bind(true))
+	content.add_child(find_ore)
 	var help := Label.new()
 	help.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	help.text = "Карта: перетаскивание • Масштаб: щипок / колесо"
@@ -123,11 +139,18 @@ func _iso(tile: Vector2) -> Vector2:
 	return Vector2((tile.x - tile.y) * TILE_W * 0.5, (tile.x + tile.y) * TILE_H * 0.5)
 
 func _draw() -> void:
-	for y in range(MAP_SIZE):
-		for x in range(MAP_SIZE):
+	var visible := _visible_tile_rect()
+	var plots := _city_plots()
+	var opened: Dictionary = {}
+	for id in _active_chunks():
+		opened[id] = true
+	for y in range(visible.position.y, visible.end.y):
+		for x in range(visible.position.x, visible.end.x):
 			var tile := Vector2i(x, y)
+			if not opened.has(Land.chunk_key(tile)):
+				continue
 			var pos := _iso(Vector2(tile))
-			var kind: String = cells.get(tile, "Свободный участок")
+			var kind: String = Land.kind_at(city_index, tile)
 			var road := kind == "Дорога"
 			var base := Color("#6e777b") if road else Color("#88b98c")
 			if not road and (x + y) % 4 == 0:
@@ -146,11 +169,13 @@ func _draw() -> void:
 				_draw_tree(pos)
 			elif COLORS.has(kind):
 				_draw_building(pos, kind)
-			if company.owns(city_index, tile):
-				var built: String = company.building_at(city_index, tile)
+			if kind == "Свободный участок" and Land.has_ore(city_index, tile):
+				draw_circle(pos, 5.0, Color("#c28147"))
+			if plots.has(Land.plot_key(tile)):
+				var built: String = _building_at(tile)
 				if built != "":
 					_draw_building(pos, built)
-				draw_circle(pos + Vector2(0, 10), 4, Color("#ffd55b"))
+				draw_circle(pos + Vector2(0, 10), 4, Color("#ffd55b") if _owns_plot(tile) else Color("#eabf9a"))
 			if selected == tile:
 				draw_polyline(PackedVector2Array([diamond[0], diamond[1], diamond[2], diamond[3], diamond[0]]), Color("#ffe175"), 3.0)
 
@@ -182,6 +207,17 @@ func _draw_building(pos: Vector2, kind: String) -> void:
 	if kind == "Завод":
 		draw_rect(Rect2(pos + Vector2(-17, -height - 29), Vector2(8, 22)), Color("#aab0b4"))
 		draw_rect(Rect2(pos + Vector2(-17, -height - 29), Vector2(8, 4)), Color("#d58d65"))
+
+	if kind == "Шахта":
+		draw_line(pos + Vector2(-16, -45), pos + Vector2(0, -80), Color("#765a3c"), 5)
+		draw_line(pos + Vector2(16, -45), pos + Vector2(0, -80), Color("#765a3c"), 5)
+		draw_circle(pos + Vector2(0, -65), 9, Color("#413c38"))
+	elif kind == "Исследовательский центр":
+		draw_circle(pos + Vector2(0, -height - 18), 14, Color("#c3d8f0"))
+		draw_line(pos + Vector2(0, -height - 25), pos + Vector2(9, -height - 40), Color.WHITE, 2)
+	elif kind == "Автосалон":
+		draw_rect(Rect2(pos + Vector2(-15, -height + 3), Vector2(31, 16)), Color("#a5e6f0"))
+		draw_rect(Rect2(pos + Vector2(-10, 1), Vector2(20, 7)), Color("#d94d49"))
 
 func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventScreenTouch:
@@ -222,21 +258,23 @@ func _unhandled_input(event: InputEvent) -> void:
 			moved_since_press = true
 		camera.position -= (event.position - last_mouse) / camera.zoom
 		last_mouse = event.position
+	queue_redraw()
 
 func _set_zoom(value: float) -> void:
 	var z := clampf(value, 0.35, 2.0)
 	camera.zoom = Vector2(z, z)
+	queue_redraw()
 
 func _select_at(screen_position: Vector2) -> void:
 	var world: Vector2 = get_canvas_transform().affine_inverse() * screen_position
 	var x := world.x / TILE_W + world.y / TILE_H
 	var y := world.y / TILE_H - world.x / TILE_W
 	var tile := Vector2i(roundi(x), roundi(y))
-	if tile.x < 0 or tile.y < 0 or tile.x >= MAP_SIZE or tile.y >= MAP_SIZE:
+	if not Land.is_open(_active_chunks(), tile):
 		return
 	selected = tile
-	var kind: String = cells.get(tile, "Свободный участок")
-	info.text = "Участок %d:%d • %s" % [tile.x, tile.y, kind]
+	var kind: String = Land.kind_at(city_index, tile)
+	info.text = "Участок %d:%d • %s%s" % [tile.x, tile.y, kind, " • руда" if Land.has_ore(city_index, tile) else ""]
 	message_label.text = ""
 	_update_actions()
 	queue_redraw()
@@ -244,22 +282,27 @@ func _select_at(screen_position: Vector2) -> void:
 func _update_actions() -> void:
 	if money_label == null or actions == null:
 		return
-	money_label.text = "Мой холдинг | %d ₽ | Участков: %d" % [company.cash, company.owned.size()]
+	var wallet: int = int(mmo_panel.client.snapshot.get("cash_minor", 0)) / 100 if _online_land() else company.cash
+	money_label.text = "Мой холдинг | %d ₽ | Кварталов: %d" % [wallet, _active_chunks().size()]
 	_refresh_economy_ui()
 	for child in actions.get_children():
 		actions.remove_child(child)
 		child.queue_free()
 	if selected.x < 0:
 		return
-	var kind: String = cells.get(selected, "Свободный участок")
-	if company.owns(city_index, selected):
-		var building := company.building_at(city_index, selected)
+	var kind: String = Land.kind_at(city_index, selected)
+	if _owns_plot(selected):
+		var building := _building_at(selected)
 		if building == "":
-			for building_type in ["Магазин", "Склад", "Завод"]:
+			for building_type in CompanyState.CONSTRUCTION:
+				if building_type == "Шахта" and not Land.has_ore(city_index, selected):
+					continue
 				_add_action("Построить %s (%d ₽)" % [building_type, CompanyState.CONSTRUCTION[building_type]], _construct.bind(building_type))
 		else:
 			info.text = "Ваш участок %d:%d • %s" % [selected.x, selected.y, building]
-	elif kind == "Свободный участок":
+			if building in ["Шахта", "Исследовательский центр", "Автосалон"]:
+				info.text += " • экономическая цепочка ещё не подключена"
+	elif kind == "Свободный участок" and not _city_plots().has(Land.plot_key(selected)):
 		_add_action("Купить участок (%d ₽)" % CompanyState.LAND_PRICE, _buy_land)
 
 func _add_action(title: String, callback: Callable) -> void:
@@ -271,16 +314,16 @@ func _add_action(title: String, callback: Callable) -> void:
 
 func _buy_land() -> void:
 	if mmo_panel != null and mmo_panel.online_active():
-		message_label.text = "Участки на локальной карте не меняют серверную собственность."
+		mmo_panel.client.send_command("land.buy", {"city": Land.CITY_IDS[city_index], "x": selected.x, "y": selected.y})
 		return
-	var kind: String = cells.get(selected, "Свободный участок")
+	var kind: String = Land.kind_at(city_index, selected)
 	message_label.text = company.buy(city_index, selected, kind)
 	_update_actions()
 	queue_redraw()
 
 func _construct(kind: String) -> void:
 	if mmo_panel != null and mmo_panel.online_active():
-		message_label.text = "Строительство MMO выполняется серверными командами."
+		mmo_panel.client.send_command("facility.build", {"city": Land.CITY_IDS[city_index], "kind": Land.SERVER_KINDS[kind], "x": selected.x, "y": selected.y})
 		return
 	message_label.text = company.construct(city_index, selected, kind)
 	_update_actions()
@@ -338,3 +381,66 @@ func _refresh_economy_ui() -> void:
 		"Цены: хлеб %d ₽, молоко %d ₽\n" % [CompanyState.Dynamics.price(city_market, "Хлеб"), CompanyState.Dynamics.price(city_market, "Молоко")] +
 		"Расчётный баланс, не реальные рыночные цены."
 	)
+
+
+func _online_land() -> bool:
+	return mmo_panel != null and mmo_panel.online_active() and mmo_panel.client.snapshot.has("land")
+
+func _active_chunks() -> Array:
+	if _online_land():
+		return mmo_panel.client.snapshot["land"][Land.CITY_IDS[city_index]]["chunks"]
+	return company.chunks(city_index)
+
+func _city_plots() -> Dictionary:
+	if _online_land():
+		return mmo_panel.client.snapshot["land"][Land.CITY_IDS[city_index]]["plots"]
+	return company.plots(city_index)
+
+func _owns_plot(tile: Vector2i) -> bool:
+	if _online_land():
+		return str(_city_plots().get(Land.plot_key(tile), {}).get("owner", "")) == mmo_panel.client.actor
+	return company.owns(city_index, tile)
+
+func _building_at(tile: Vector2i) -> String:
+	if _online_land():
+		var id := str(_city_plots().get(Land.plot_key(tile), {}).get("building", ""))
+		var kind := str(_city_plots().get(Land.plot_key(tile), {}).get("kind", ""))
+		for label in Land.SERVER_KINDS:
+			if Land.SERVER_KINDS[label] == kind:
+				return label
+		return ""
+	return company.building_at(city_index, tile)
+
+func _find_free_plot(ore_only: bool = false) -> void:
+	var tile := Land.free_plot(city_index, _active_chunks(), _city_plots(), ore_only)
+	if tile.x < 0:
+		message_label.text = "Нет подходящих свободных участков в открытых кварталах"
+		return
+	selected = tile
+	camera.position = _iso(Vector2(tile))
+	info.text = "Участок %d:%d • свободен%s" % [tile.x, tile.y, " • руда" if Land.has_ore(city_index, tile) else ""]
+	_update_actions()
+	queue_redraw()
+
+func _on_world_snapshot(_data: Dictionary) -> void:
+	_update_actions()
+	queue_redraw()
+
+func _on_world_logout() -> void:
+	_update_actions()
+	queue_redraw()
+
+func _visible_tile_rect() -> Rect2i:
+	var inverse := get_canvas_transform().affine_inverse()
+	var extent := get_viewport_rect().size
+	var low := Vector2(INF, INF)
+	var high := Vector2(-INF, -INF)
+	for corner in [Vector2.ZERO, Vector2(extent.x, 0), extent, Vector2(0, extent.y)]:
+		var world: Vector2 = inverse * corner
+		var tile := Vector2(world.x / TILE_W + world.y / TILE_H, world.y / TILE_H - world.x / TILE_W)
+		low = low.min(tile)
+		high = high.max(tile)
+	# Include tall building tops whose ground tile lies below the viewport.
+	var start := Vector2i(maxi(0, floori(low.x) - 5), maxi(0, floori(low.y) - 5))
+	var finish := Vector2i(mini(Land.LIMIT, ceili(high.x) + 6), mini(Land.LIMIT, ceili(high.y) + 6))
+	return Rect2i(start, (finish - start).max(Vector2i.ZERO))

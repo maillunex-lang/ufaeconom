@@ -2,16 +2,19 @@ extends RefCounted
 class_name CompanyState
 
 ## 0.4 offline company. All money is integer game rubles.
+const Land = preload("res://scripts/city_land.gd")
 const Economy = preload("res://scripts/economy_simulator.gd")
 const Dynamics = preload("res://scripts/market_dynamics.gd")
 const Calendar = preload("res://scripts/game_calendar.gd")
 const START_CASH := 2000000
 const LAND_PRICE := 120000
-const CONSTRUCTION := {"Магазин": 350000, "Склад": 280000, "Завод": 800000}
+const CONSTRUCTION := {"Магазин": 350000, "Склад": 280000, "Завод": 800000, "Шахта": 700000, "Исследовательский центр": 600000, "Автосалон": 500000}
 const SAVE_PATH := "user://business_empire_04.json"
 const LEGACY_SAVE_PATH := "user://business_empire_03.json"
 const CITY_COUNT := 4
 const MAP_SIZE := 32
+
+var city_chunks: Dictionary = {}
 
 var save_path: String = SAVE_PATH
 var legacy_save_path: String = LEGACY_SAVE_PATH
@@ -28,6 +31,7 @@ var totals: Dictionary = {"revenue": 0, "expenses": 0, "cashflow": 0, "profit": 
 func reset() -> void:
 	cash = START_CASH
 	owned.clear()
+	city_chunks.clear()
 	city_index = 0
 	day = 0
 	last_tick_unix = 0
@@ -55,7 +59,7 @@ func storage_capacity(city: int) -> int:
 	return Economy.capacity(self, city)
 
 func buy(city: int, tile: Vector2i, kind: String) -> String:
-	if city < 0 or city >= CITY_COUNT or tile.x < 0 or tile.y < 0 or tile.x >= MAP_SIZE or tile.y >= MAP_SIZE:
+	if city < 0 or city >= CITY_COUNT or not Land.is_open(chunks(city), tile):
 		return "Некорректные координаты участка"
 	if kind != "Свободный участок":
 		return "Можно купить только свободный участок"
@@ -80,6 +84,8 @@ func construct(city: int, tile: Vector2i, kind: String) -> String:
 		return "На участке уже построено здание"
 	if not CONSTRUCTION.has(kind):
 		return "Неизвестный тип предприятия"
+	if kind == "Шахта" and not Land.has_ore(city, tile):
+		return "Для шахты нужен участок с месторождением руды"
 	var price: int = CONSTRUCTION[kind]
 	if cash < price:
 		return "Недостаточно средств для строительства"
@@ -89,6 +95,7 @@ func construct(city: int, tile: Vector2i, kind: String) -> String:
 	totals["capital_expenditure"] = int(totals["capital_expenditure"]) + price
 	property["building"] = kind
 	owned[id] = property
+	Land.grow(city, chunks(city), plots(city), tile)
 	save_game()
 	return "%s построен за %d ₽" % [kind, price]
 
@@ -125,7 +132,7 @@ func save_game() -> bool:
 	var data := {
 		"version": 2, "cash": cash, "city_index": city_index,
 		"day": day, "last_tick_unix": last_tick_unix, "properties": items, "markets": markets,
-		"totals": totals, "last_report": last_report, "shipments": shipments
+		"totals": totals, "last_report": last_report, "shipments": shipments, "city_chunks": city_chunks
 	}
 	var file := FileAccess.open(save_path, FileAccess.WRITE)
 	if file == null:
@@ -156,6 +163,15 @@ func load_game() -> bool:
 	var properties: Variant = parsed.get("properties", [])
 	if new_cash < 0 or new_city < 0 or new_city >= CITY_COUNT or new_day < 0 or new_last_tick < 0 or not (properties is Array):
 		return false
+	var new_chunks: Dictionary = {}
+	var incoming_chunks: Variant = parsed.get("city_chunks", {})
+	if not (incoming_chunks is Dictionary):
+		return false
+	for city in range(CITY_COUNT):
+		var value: Variant = incoming_chunks.get(str(city), Land.initial_chunks())
+		if not Land.valid_chunks(value):
+			return false
+		new_chunks[str(city)] = value
 	var new_owned: Dictionary = {}
 	for item in properties:
 		if not (item is Dictionary):
@@ -164,7 +180,7 @@ func load_game() -> bool:
 		var x := int(item.get("x", -1))
 		var y := int(item.get("y", -1))
 		var building := str(item.get("building", ""))
-		if city < 0 or city >= CITY_COUNT or x < 0 or y < 0 or x >= MAP_SIZE or y >= MAP_SIZE:
+		if city < 0 or city >= CITY_COUNT or not Land.is_open(new_chunks[str(city)], Vector2i(x, y)):
 			return false
 		if building != "" and not CONSTRUCTION.has(building):
 			return false
@@ -256,8 +272,21 @@ func load_game() -> bool:
 	day = new_day
 	last_tick_unix = new_last_tick
 	owned = new_owned
+	city_chunks = new_chunks
 	markets = new_markets
 	shipments = new_shipments
 	totals = new_totals
 	last_report = new_report
 	return true
+
+func chunks(city: int) -> Array:
+	if not city_chunks.has(str(city)):
+		city_chunks[str(city)] = Land.initial_chunks()
+	return city_chunks[str(city)]
+
+func plots(city: int) -> Dictionary:
+	var result: Dictionary = {}
+	for item in owned.values():
+		if int(item["city"]) == city:
+			result[Land.plot_key(Vector2i(int(item["x"]), int(item["y"])))] = item
+	return result
