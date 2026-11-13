@@ -116,7 +116,7 @@ def new_world(epoch_unix: int = 1800000000) -> dict:
         "schema": 1, "epoch_unix": epoch_unix, "tick": 0, "revision": 0,
         "wallets": wallets, "suppliers": suppliers, "facilities": facilities,
         "shipments": [], "next_shipment": 1, "next_facility": 1,
-        "district_population": {}, "mission_claims": {}, "receipts": {}, "audit": audit, "pending_ledger": [], "finance_history": [],
+        "district_population": {}, "district_investments": {}, "mission_claims": {}, "receipts": {}, "audit": audit, "pending_ledger": [], "finance_history": [],
         "contracts": {}, "next_contract": 1,
         "stats": {"sales": 0, "units_sold": 0, "delivered": 0,
                   "produced": 0, "blocked": 0, "days_closed": 0},
@@ -141,6 +141,7 @@ def migrate_industry(w: dict) -> None:
     """In-memory additive migration of 0.7.7 saves; persisted on next atomic commit."""
     w.setdefault("mission_claims", {})
     w.setdefault("district_population", {})
+    w.setdefault("district_investments", {})
     if "flour" not in w["audit"]:
         w["audit"]["flour"] = {"initial": 0, "sourced": 0,
                                  "converted_in": 0, "converted_out": 0, "consumed": 0}
@@ -545,10 +546,11 @@ def _district_infrastructure(w: dict, city: str, district: tuple[int, int]) -> d
     services = sum(f["kind"] in ("shop", "research_center") for f in local)
     industry = sum(f["kind"] in ("factory", "mine") for f in local)
     jobs = sum(int(f.get("workers", 0)) for f in local)
-    score = max(0, min(100, 30 + min(25, roads // 3)
+    upgrades = int(w.get("district_investments", {}).get(city, {}).get(f"{cx}:{cy}", 0))
+    score = max(0, min(100, 30 + upgrades * 5 + min(25, roads // 3)
                        + min(20, housing * 2) + services * 7
                        + min(20, jobs // 2) - industry * 8))
-    return {"roads": roads, "housing_tiles": housing, "services": services,
+    return {"roads": roads, "housing_tiles": housing, "investment_level": upgrades, "services": services,
             "industry": industry, "jobs": jobs, "attractiveness": score}
 
 
@@ -1075,7 +1077,36 @@ def apply_command(w: dict, actor: str, command: dict) -> dict:
     if kind in ("automation.configure", "facility.set_price", "facility.buy", "shipment.create", "facility.set_staff", "facility.set_production", "facility.set_recipe", "facility.upgrade_equipment", "contract.offer", "facility.expand_storage"):
         if fac is None or fac["owner"] != actor:
             raise EconomyError("facility not owned")
-    if kind == "mission.claim":
+    if kind == "district.invest":
+        city = command.get("city")
+        district = command.get("district")
+        if (type(city) is not str or city not in CITIES or
+                type(district) is not str or not district.count(":") == 1):
+            raise EconomyError("invalid district")
+        parts = district.split(":")
+        if any(not p.isascii() or not p.isdecimal() for p in parts):
+            raise EconomyError("invalid district")
+        x, y = map(int, parts)
+        if (x > 1023 or y > 1023 or f"{x}:{y}" != district or
+                district not in w["land"][city]["chunks"]):
+            raise EconomyError("district unavailable")
+        if not any(f["owner"] == actor and f["city"] == city
+                   and isinstance(f.get("plot"), dict)
+                   and int(f["plot"]["x"]) // 16 == x
+                   and int(f["plot"]["y"]) // 16 == y
+                   for f in w["facilities"].values()):
+            raise EconomyError("no owned facility in district")
+        levels = w.setdefault("district_investments", {}).setdefault(city, {})
+        level = int(levels.get(district, 0))
+        cost = (level + 1) * 2_000_000
+        if level >= 5 or w["wallets"]["company:" + actor] < cost:
+            raise EconomyError("investment unavailable")
+        _money(w, "company:" + actor, "treasury:" + city, cost,
+               "district.infrastructure_investment", district)
+        levels[district] = level + 1
+        result = {"ok": True, "city": city, "district": district,
+                  "level": level + 1, "cost_minor": cost}
+    elif kind == "mission.claim":
         mission = command.get("mission")
         if not isinstance(mission, str) or mission not in MISSION_REWARDS_MINOR:
             raise EconomyError("unknown mission")
