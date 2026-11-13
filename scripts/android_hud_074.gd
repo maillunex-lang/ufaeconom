@@ -35,7 +35,7 @@ var top_header: HBoxContainer
 var construction_scroll: ScrollContainer
 var business_scroll: ScrollContainer
 var hud_refresh_accum := 0.0
-const HUD_REFRESH_SECONDS := 0.20
+const HUD_REFRESH_SECONDS := 0.50
 var construction_panel: PanelContainer
 var construction_title: Label
 var construction_status: Label
@@ -46,6 +46,8 @@ var construction_cancel: Button
 var construction_buy: Button
 var construction_picker: OptionButton
 var construction_toggle: Button
+var construction_picker_signature := ""
+var construction_selected_tile := Vector2i(-1, -1)
 var missions = TutorialMissions.new()
 var mission_panel: PanelContainer
 var mission_scroll: ScrollContainer
@@ -129,7 +131,7 @@ func _ready() -> void:
     mission_close = Button.new()
     mission_close.text = "✕"
     mission_close.custom_minimum_size = Vector2(48, 48)
-    mission_close.pressed.connect(func() -> void: mission_panel.visible = false)
+    mission_close.pressed.connect(_show_city)
     mission_header.add_child(mission_close)
     mission_scroll = ScrollContainer.new()
     mission_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
@@ -228,7 +230,8 @@ func _process(delta: float) -> void:
     hud_refresh_accum += delta
     if hud_refresh_accum >= HUD_REFRESH_SECONDS:
         hud_refresh_accum = 0.0
-        refresh_missions()
+        if mission_panel != null and mission_panel.visible:
+            refresh_missions()
 
 
 static func fit_panel(width: float, height: float, preferred_width: float, preferred_height: float, top_margin: float, bottom_margin: float) -> Rect2:
@@ -301,24 +304,31 @@ func update_construction() -> void:
     construction_picker.visible = owned
     construction_confirm.visible = owned and game.construction_preview != ""
     construction_cancel.visible = construction_confirm.visible
-    construction_picker.clear()
+    var available: Array[String] = []
     if owned:
-        var chosen := -1
         for kind in game.CompanyState.CONSTRUCTION:
             if kind == "Шахта" and not game.Land.has_ore(game.city_index, tile):
                 continue
-            construction_picker.add_item(str(kind))
-            if str(kind) == game.construction_preview:
-                chosen = construction_picker.item_count - 1
-        if chosen >= 0:
-            construction_picker.select(chosen)
-        else:
-            construction_picker.select(-1)
+            available.append(str(kind))
+    var signature := str(tile) + ":" + str(available)
+    if construction_picker_signature != signature:
+        construction_picker_signature = signature
+        construction_selected_tile = tile
+        construction_picker.clear()
+        for kind in available:
+            construction_picker.add_item(kind)
+    if game.construction_preview != "":
+        var selected_index := available.find(game.construction_preview)
+        if selected_index >= 0 and construction_picker.selected != selected_index:
+            construction_picker.select(selected_index)
+    elif construction_picker.selected != -1:
+        construction_picker.select(-1)
     var cost: int = game.CompanyState.LAND_PRICE if not owned else int(game.CompanyState.CONSTRUCTION.get(game.construction_preview, 0))
     construction_cost.text = "Цена участка: %d ₽" % cost if not owned else "Стоимость строительства: %d ₽" % cost if game.construction_preview != "" else "Выберите тип здания"
     var wallet: int = int(game.mmo_panel.client.snapshot.get("cash_minor", 0)) / 100 if game._online_land() else game.company.cash
     construction_buy.disabled = not owned and wallet < cost
     construction_confirm.disabled = owned and (cost > wallet or game.construction_preview == "")
+    construction_confirm.tooltip_text = "Подтвердить расходы: %d ₽" % cost if owned else ""
 
 
 func _menu_button(title: String, action: Callable) -> void:
@@ -453,6 +463,7 @@ func _show_menu() -> void:
 
 func _resume() -> void:
     _set_menu_visible(false)
+    mission_panel.visible = false
     active_tab = "Город"
     refresh_missions()
     _update_nav()
