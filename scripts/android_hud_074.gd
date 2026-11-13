@@ -1,6 +1,7 @@
 extends CanvasLayer
 ## Android landscape HUD: only client presentation and existing game actions.
 const SafeArea = preload("res://scripts/mobile_safe_area.gd")
+const TutorialMissions = preload("res://scripts/tutorial_missions_0836.gd")
 var game: Node2D
 var safe: Control
 var top: PanelContainer
@@ -40,6 +41,13 @@ var construction_cancel: Button
 var construction_buy: Button
 var construction_picker: OptionButton
 var construction_toggle: Button
+var missions = TutorialMissions.new()
+var mission_panel: PanelContainer
+var mission_scroll: ScrollContainer
+var mission_text: Label
+var mission_hint: Label
+var mission_close: Button
+var mission_go: Button
 const UI_MIN_TOUCH := 48.0
 
 func _ready() -> void:
@@ -99,6 +107,34 @@ func _ready() -> void:
     construction_cancel.pressed.connect(func() -> void: game._cancel_preview())
     construction_buttons.add_child(construction_cancel)
     construction_panel.visible = false
+    missions.load_progress()
+    mission_panel = _panel("MissionsPanel")
+    var mission_box := VBoxContainer.new()
+    mission_box.add_theme_constant_override("separation", 8)
+    mission_panel.add_child(mission_box)
+    var mission_header := HBoxContainer.new()
+    mission_box.add_child(mission_header)
+    _label(mission_header, "ПЕРВЫЕ ШАГИ • ЗАДАНИЯ", 19)
+    mission_close = Button.new()
+    mission_close.text = "✕"
+    mission_close.custom_minimum_size = Vector2(48, 48)
+    mission_close.pressed.connect(func() -> void: mission_panel.visible = false)
+    mission_header.add_child(mission_close)
+    mission_scroll = ScrollContainer.new()
+    mission_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+    mission_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+    mission_box.add_child(mission_scroll)
+    mission_text = _label(mission_scroll, "", 15)
+    mission_text.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+    mission_text.clip_text = false
+    mission_go = Button.new()
+    mission_go.text = "Перейти к цели"
+    mission_go.custom_minimum_size = Vector2(150, 48)
+    _style_button(mission_go, true)
+    mission_go.pressed.connect(_go_to_mission)
+    mission_box.add_child(mission_go)
+    mission_hint = _label(mission_box, "Учебный прогресс сохраняется на устройстве", 12)
+    mission_panel.visible = false
     var header := HBoxContainer.new()
     header.add_theme_constant_override("separation", 16)
     top.add_child(header)
@@ -164,6 +200,7 @@ func _ready() -> void:
     menu_buttons.add_theme_constant_override("separation", 10)
     menu_box.add_child(menu_buttons)
     _menu_button("Продолжить игру", _resume)
+    _menu_button("Обучение и задания", _show_tasks)
     _menu_button("В город", _resume)
     _menu_button("Профиль / MMO", _open_profile)
     _menu_button("Настройки", _open_settings)
@@ -307,6 +344,7 @@ func _close_panels() -> void:
     _set_mmo_visible(false)
     business_panel.visible = false
     construction_panel.visible = false
+    mission_panel.visible = false
     if game.tycoon_panel != null and game.tycoon_panel.visible:
         game.tycoon_panel.visible = false
 
@@ -319,6 +357,7 @@ func _show_city() -> void:
 
 func _show_business() -> void:
     active_tab = "Бизнес"
+    missions.mark("manage")
     _close_panels()
     game.tycoon_panel.toggle()
     _update_nav()
@@ -326,6 +365,7 @@ func _show_business() -> void:
 
 func _show_market() -> void:
     active_tab = "Рынок"
+    missions.mark("market")
     _close_panels()
     if game.mmo_panel.online_active():
         mmo_open = true
@@ -340,9 +380,41 @@ func _show_market() -> void:
 func _show_tasks() -> void:
     active_tab = "Задания"
     _close_panels()
-    details.visible = true
-    details_text.text = "Задания появятся после подключения системы прогрессии."
+    _set_menu_visible(false)
+    mission_panel.visible = true
+    refresh_missions()
     _update_nav()
+
+
+func refresh_missions() -> void:
+    if game == null or mission_text == null:
+        return
+    missions.refresh_from_game(game)
+    mission_text.text = missions.progress_text()
+    mission_go.disabled = missions.next_step().is_empty()
+
+
+func _go_to_mission() -> void:
+    var step: Dictionary = missions.next_step()
+    if step.is_empty():
+        return
+    mission_panel.visible = false
+    _show_city()
+    match str(step["id"]):
+        "explore":
+            game.message_label.text = "Коснитесь участка на карте."
+        "find":
+            game.show_available_plots = true
+            game.queue_redraw()
+            refresh_missions()
+        "land":
+            game._find_free_plot()
+        "build":
+            game.message_label.text = "Выберите принадлежащий вам пустой участок."
+        "manage":
+            _show_business()
+        "market":
+            _show_market()
 
 
 func _show_menu() -> void:
@@ -355,6 +427,7 @@ func _show_menu() -> void:
 func _resume() -> void:
     _set_menu_visible(false)
     active_tab = "Город"
+    refresh_missions()
     _update_nav()
 
 
@@ -469,6 +542,7 @@ func update_values() -> void:
         business_panel.visible = false
         details.visible = false
     update_construction()
+    refresh_missions()
     _layout()
 
 func _layout() -> void:
@@ -510,3 +584,7 @@ func _layout() -> void:
     var construction_width := minf(370, w * 0.48)
     construction_panel.position = Vector2(maxf(0, w - construction_width), 66)
     construction_panel.size = Vector2(construction_width, minf(265, maxf(120, h - bottom_height - 78)))
+    var mission_width := minf(510, w * 0.78)
+    var mission_height := minf(440, maxf(150, h - bottom_height - 74))
+    mission_panel.position = Vector2((w - mission_width) * 0.5, 62)
+    mission_panel.size = Vector2(mission_width, mission_height)
