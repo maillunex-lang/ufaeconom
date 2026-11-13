@@ -43,8 +43,11 @@ var selected := Vector2i(-1, -1)
 var city_index := 0
 var cells: Dictionary = {}
 # Static terrain metadata cache; dynamic plots, ownership and MMO overlays are never cached.
-const TERRAIN_CACHE_LIMIT := 8192
+const TERRAIN_CACHE_LIMIT := 4096
+const TERRAIN_CACHE_EVICT := 512
 var terrain_cache: Dictionary = {}
+var terrain_cache_order: Array[Vector2i] = []
+var terrain_cache_evictions := 0
 var terrain_cache_hits := 0
 var terrain_cache_misses := 0
 
@@ -128,12 +131,19 @@ func _static_tile_data(tile: Vector2i) -> Dictionary:
 		"outline": outline
 	}
 	if terrain_cache.size() >= TERRAIN_CACHE_LIMIT:
-		terrain_cache.clear()
+		# Evict a bounded oldest batch instead of clearing every visible tile.
+		for i in range(mini(TERRAIN_CACHE_EVICT, terrain_cache_order.size())):
+			terrain_cache.erase(terrain_cache_order[i])
+			terrain_cache_evictions += 1
+		terrain_cache_order = terrain_cache_order.slice(mini(TERRAIN_CACHE_EVICT, terrain_cache_order.size()))
 	terrain_cache[tile] = data
+	terrain_cache_order.append(tile)
 	return data
 
 func _clear_terrain_cache() -> void:
 	terrain_cache.clear()
+	terrain_cache_order.clear()
+	terrain_cache_evictions = 0
 	terrain_cache_hits = 0
 	terrain_cache_misses = 0
 
