@@ -26,11 +26,16 @@ func _process(delta: float) -> void:
     smoothed_fps = float(frames) / elapsed
     frames = 0
     elapsed = 0.0
-    if not auto_enabled or change_cooldown > 0.0:
+    if not auto_enabled:
+        return
+    if smoothed_fps < 15.0 and level > 0:
+        apply_quality(0)
+        return
+    if change_cooldown > 0.0:
         return
     low_samples = low_samples + 1 if smoothed_fps < 27.0 else 0
     high_samples = high_samples + 1 if smoothed_fps > 53.0 else 0
-    if low_samples >= 3 and level > 0:
+    if low_samples >= 2 and level > 0:
         apply_quality(level - 1)
     elif high_samples >= 8 and level < 2:
         apply_quality(level + 1)
