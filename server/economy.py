@@ -57,6 +57,8 @@ NPC_DECISION_INTERVAL = TICKS_PER_DAY
 NPC_BUILD_INTERVAL = TICKS_PER_MONTH
 NPC_STRATEGIES = {"npc": "value", "npc_auto": "growth"}
 MARKET_WINDOW_DAYS = 30
+AUTOMATION_MAX_BUDGET = 5_000_000
+AUTOMATION_MAX_EVENTS = 100
 
 
 class EconomyError(ValueError):
@@ -117,6 +119,7 @@ def new_world(epoch_unix: int = 1800000000) -> dict:
                   "produced": 0, "blocked": 0, "days_closed": 0},
         "last_sales": {}, "month_reports": [],
         "market_daily": [], "market_today": {}, "market_totals": {},
+        "automation_rules": {}, "automation_events": [], "automation_spend": {},
         "company_metrics": {owner: {"revenue": 0, "cogs": 0,
                                      "operating_expense": 0, "freight": 0,
                                      "capital_expenditure": 0, "profit": 0}
@@ -163,6 +166,9 @@ def migrate_industry(w: dict) -> None:
     w.setdefault("market_daily", [])
     w.setdefault("market_today", {})
     w.setdefault("market_totals", {})
+    w.setdefault("automation_rules", {})
+    w.setdefault("automation_events", [])
+    w.setdefault("automation_spend", {})
 
 
 def register_company(w: dict, actor: str, city: str = "ufa") -> None:
@@ -561,6 +567,87 @@ def _close_month(w: dict) -> None:
         w["month_reports"] = w["month_reports"][-24:]
 
 
+def _automation_event(w: dict, owner: str, facility_id: str, action: str,
+                      detail: str) -> None:
+    history = w.setdefault("automation_events", [])
+    history.append({"tick": w["tick"], "owner": owner, "facility_id": facility_id,
+                    "action": action, "detail": detail})
+    del history[:-AUTOMATION_MAX_EVENTS]
+
+
+def _automation_tick(w: dict) -> None:
+    """Bounded, opt-in, deterministic server-side rules, evaluated once daily."""
+    if w["tick"] % TICKS_PER_DAY:
+        return
+    day = w["tick"] // TICKS_PER_DAY
+    spend = w.setdefault("automation_spend", {})
+    spend.clear()
+    for facility_id, rule in sorted(w.get("automation_rules", {}).items()):
+        fac = w["facilities"].get(facility_id)
+        if not fac or not rule.get("enabled") or fac["owner"] in NPC_OWNERS:
+            continue
+        owner = fac["owner"]
+        cap = rule["daily_budget_minor"]
+        spent = spend.get(facility_id, 0)
+        if fac["kind"] == "factory":
+            if rule["production"]:
+                fac["production_target"] = rule["production_target"]
+                _automation_event(w, owner, facility_id, "production",
+                                  str(rule["production_target"]))
+            if rule["buy_inputs"]:
+                recipe = RECIPES[fac.get("recipe", "bread")]
+                raw, per_batch = recipe[0], recipe[1]
+                if raw in SOURCE_PRICES:
+                    target = rule["stock_target"]
+                    shortage = max(0, target - fac["stock"][raw])
+                    remaining = max(0, cap - spent)
+                    qty = min(shortage, rule["max_purchase_units"],
+                              remaining // SOURCE_PRICES[raw])
+                    if qty:
+                        amount = _buy(w, fac, raw, qty)
+                        if amount:
+                            cost = amount * SOURCE_PRICES[raw]
+                            spend[facility_id] = spent + cost
+                            _automation_event(w, owner, facility_id, "buy",
+                                              raw + ":" + str(amount) + ":" + str(cost))
+        elif fac["kind"] == "shop":
+            if rule["restock"]:
+                for good in ("bread", "flour"):
+                    shortage = max(0, rule["stock_target"] - fac["stock"][good])
+                    for source in sorted(w["facilities"].values(), key=lambda x: x["id"]):
+                        if not shortage:
+                            break
+                        if (source["owner"] != owner or source["kind"] != "factory"
+                                or source["city"] != fac["city"]):
+                            continue
+                        free = fac["capacity"] - sum(fac["stock"].values()) - _inbound(w, fac["id"])
+                        qty = min(shortage, rule["max_purchase_units"], free, source["stock"][good])
+                        if qty > 0:
+                            basis = _take(source, good, qty)
+                            _put(fac, good, qty, basis)
+                            shortage -= qty
+                            _automation_event(w, owner, facility_id, "restock",
+                                              good + ":" + str(qty) + ":" + source["id"])
+            if rule["pricing"]:
+                for good in ("bread", "milk", "flour"):
+                    rivals = sorted(other["prices"][good] for other in w["facilities"].values()
+                                    if other["city"] == fac["city"] and other["kind"] == "shop"
+                                    and other["owner"] != owner and other["stock"][good] > 0)
+                    if not rivals:
+                        continue
+                    target = rivals[0] - rule["undercut_minor"]
+                    floor = BASE_PRICES[good] * 7 // 10
+                    ceiling = BASE_PRICES[good] * 3 // 2
+                    target = max(floor, min(ceiling, target))
+                    old = fac["prices"][good]
+                    max_step = max(1, old // 100)
+                    price = old + max(-max_step, min(max_step, target - old))
+                    if price != old:
+                        fac["prices"][good] = price
+                        _automation_event(w, owner, facility_id, "price",
+                                          good + ":" + str(price))
+
+
 def advance(w: dict, ticks: int = 1) -> None:
     if type(ticks) is not int or ticks < 0 or ticks > 360:
         raise EconomyError("invalid tick count")
@@ -568,6 +655,7 @@ def advance(w: dict, ticks: int = 1) -> None:
         w["tick"] += 1
         _replenish_suppliers(w)
         _deliver(w)
+        _automation_tick(w)
         _produce(w)
         _local_restock(w)
         if w["tick"] >= w.get("npc_next_action", NPC_DECISION_INTERVAL):
@@ -885,10 +973,32 @@ def apply_command(w: dict, actor: str, command: dict) -> dict:
     if fac_id is not None and not isinstance(fac_id, str):
         raise EconomyError("invalid facility id")
     fac = w["facilities"].get(fac_id)
-    if kind in ("facility.set_price", "facility.buy", "shipment.create", "facility.set_staff", "facility.set_production", "facility.set_recipe", "facility.upgrade_equipment", "contract.offer", "facility.expand_storage"):
+    if kind in ("automation.configure", "facility.set_price", "facility.buy", "shipment.create", "facility.set_staff", "facility.set_production", "facility.set_recipe", "facility.upgrade_equipment", "contract.offer", "facility.expand_storage"):
         if fac is None or fac["owner"] != actor:
             raise EconomyError("facility not owned")
-    if kind == "facility.set_staff":
+    if kind == "automation.configure":
+        fields = ("enabled", "buy_inputs", "restock", "production", "pricing")
+        if any(type(command.get(k)) is not bool for k in fields):
+            raise EconomyError("invalid automation flags")
+        integers = ("daily_budget_minor", "stock_target", "max_purchase_units",
+                    "production_target", "undercut_minor")
+        if any(type(command.get(k)) is not int for k in integers):
+            raise EconomyError("invalid automation limits")
+        budget, target, quantity, production, undercut = (command[k] for k in integers)
+        if (not 0 <= budget <= AUTOMATION_MAX_BUDGET or
+                not 0 <= target <= 300 or not 1 <= quantity <= 100 or
+                not 0 <= production <= MAX_PRODUCTION_BATCH or
+                not 0 <= undercut <= 1000):
+            raise EconomyError("automation limits out of range")
+        if ((fac["kind"] != "factory" and (command["buy_inputs"] or command["production"])) or
+                (fac["kind"] != "shop" and (command["restock"] or command["pricing"]))):
+            raise EconomyError("automation not supported for facility")
+        rule = {k: command[k] for k in fields + integers}
+        w.setdefault("automation_rules", {})[fac_id] = rule
+        _automation_event(w, actor, fac_id, "configure",
+                          "enabled" if rule["enabled"] else "disabled")
+        result = {"ok": True, "rule": copy.deepcopy(rule)}
+    elif kind == "facility.set_staff":
         workers, wage = command.get("workers"), command.get("wage_minor")
         if (type(workers) is not int or type(wage) is not int or
                 not 0 <= workers <= STAFF_CAP[fac["kind"]] or
@@ -1092,6 +1202,12 @@ def snapshot(w: dict, actor: str) -> dict:
         "market": market, "market_analytics": market_report(w),
         "market_window_days": len(w.get("market_daily", [])),
         "economic_intelligence": economic_intelligence(w, actor),
+        "automation_rules": {fid: copy.deepcopy(rule) for fid, rule in
+            w.get("automation_rules", {}).items() if fid in own},
+        "automation_events": copy.deepcopy([ev for ev in
+            w.get("automation_events", []) if ev["owner"] == actor][-30:]),
+        "automation_spend": {fid: value for fid, value in
+            w.get("automation_spend", {}).items() if fid in own},
         "stats": copy.deepcopy(w["stats"]),
         "npc_competitors": [{"owner": owner, "strategy": NPC_STRATEGIES[owner],
             "facilities": sum(1 for f in w["facilities"].values() if f["owner"] == owner),
