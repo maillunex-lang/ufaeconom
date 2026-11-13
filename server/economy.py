@@ -116,7 +116,7 @@ def new_world(epoch_unix: int = 1800000000) -> dict:
         "schema": 1, "epoch_unix": epoch_unix, "tick": 0, "revision": 0,
         "wallets": wallets, "suppliers": suppliers, "facilities": facilities,
         "shipments": [], "next_shipment": 1, "next_facility": 1,
-        "mission_claims": {}, "receipts": {}, "audit": audit, "pending_ledger": [], "finance_history": [],
+        "district_population": {}, "mission_claims": {}, "receipts": {}, "audit": audit, "pending_ledger": [], "finance_history": [],
         "contracts": {}, "next_contract": 1,
         "stats": {"sales": 0, "units_sold": 0, "delivered": 0,
                   "produced": 0, "blocked": 0, "days_closed": 0},
@@ -140,6 +140,7 @@ def new_world(epoch_unix: int = 1800000000) -> dict:
 def migrate_industry(w: dict) -> None:
     """In-memory additive migration of 0.7.7 saves; persisted on next atomic commit."""
     w.setdefault("mission_claims", {})
+    w.setdefault("district_population", {})
     if "flour" not in w["audit"]:
         w["audit"]["flour"] = {"initial": 0, "sourced": 0,
                                  "converted_in": 0, "converted_out": 0, "consumed": 0}
@@ -519,18 +520,39 @@ def _district_retail_score(fac: dict, competitors: list[dict]) -> int:
     return center_distance * 9 + same_district * 120
 
 
-def _district_population(city: str, district: tuple[int, int]) -> int:
-    """Deterministic synthetic households, independent of player activity."""
+def _district_population(city: str, district: tuple[int, int], w: dict | None = None) -> int:
+    """Persistent synthetic population; old saves use a deterministic baseline."""
     x, y = district
-    return max(10, 1000 - 80 * (abs(x) + abs(y)))
+    baseline = max(10, 1000 - 80 * (abs(x) + abs(y)))
+    if w is None:
+        return baseline
+    return int(w.get("district_population", {}).get(city, {}).get(f"{x}:{y}", baseline))
 
 
-def _district_sales_weights(city: str, shops: list[dict]) -> dict[tuple[int, int], int]:
+def _update_district_population(w: dict) -> None:
+    """Monthly bounded migration based on nearby jobs and local infrastructure."""
+    populations = w.setdefault("district_population", {})
+    for city in CITIES:
+        shops = [f for f in w["facilities"].values() if f["city"] == city and f["kind"] == "shop"]
+        weights = _district_sales_weights(city, shops, w)
+        city_pop = populations.setdefault(city, {})
+        for (x, y), previous in sorted(weights.items()):
+            local = [f for f in w["facilities"].values()
+                     if f["city"] == city and isinstance(f.get("plot"), dict)
+                     and int(f["plot"]["x"]) // 16 == x and int(f["plot"]["y"]) // 16 == y]
+            jobs = sum(int(f.get("workers", 0)) for f in local)
+            services = sum(f["kind"] in ("shop", "research_center") for f in local)
+            industry = sum(f["kind"] in ("factory", "mine") for f in local)
+            delta = max(-8, min(8, jobs // 3 + services * 2 - industry * 3 - 1))
+            city_pop[f"{x}:{y}"] = max(10, min(5000, previous + delta))
+
+
+def _district_sales_weights(city: str, shops: list[dict], w: dict | None = None) -> dict[tuple[int, int], int]:
     """Synthetic population weights; include neighboring residential districts."""
     districts = {(0, 0), (1, 0), (0, 1), (1, 1)}
     districts.update((int(f["plot"]["x"]) // 16, int(f["plot"]["y"]) // 16)
                      for f in shops if isinstance(f.get("plot"), dict))
-    return {d: _district_population(city, d) for d in sorted(districts)}
+    return {d: _district_population(city, d, w) for d in sorted(districts)}
 
 
 def _allocate_district_demand(total: int, weights: dict[tuple[int, int], int]) -> dict[tuple[int, int], int]:
@@ -567,7 +589,7 @@ def _retail(w: dict) -> None:
             best_price = min(fac["prices"][good] for fac in shops)
             demand = min(DEMAND[city][good] * 2,
                          DEMAND[city][good] * BASE_PRICES[good] // best_price)
-            weights = _district_sales_weights(city, shops)
+            weights = _district_sales_weights(city, shops, w)
             allocations = _allocate_district_demand(demand, weights)
             affordable = w["wallets"]["residents:" + city]
             for district, district_demand in allocations.items():
@@ -603,6 +625,7 @@ def _retail(w: dict) -> None:
     w["last_sales"] = recent
 
 def _close_month(w: dict) -> None:
+    _update_district_population(w)
     # One rent charge per facility, once every 360 production ticks.
     for fac in w["facilities"].values():
         fee = {"factory": 12_000, "shop": 8_000, "warehouse": 4_000,
@@ -1345,10 +1368,10 @@ def district_demand(w: dict, actor: str) -> list[dict]:
                            "estimated_bread_demand_per_tick": _allocate_district_demand(
                                DEMAND[city]["bread"],
                                _district_sales_weights(city, [f for f in w["facilities"].values()
-                                                               if f["city"] == city and f["kind"] == "shop"])
+                                                               if f["city"] == city and f["kind"] == "shop"], w)
                            ).get(tuple(map(int, district.split(":"))), 0),
                            "synthetic_population": _district_population(
-                               city, tuple(map(int, district.split(":")))),
+                               city, tuple(map(int, district.split(":"))), w),
                            "competition_level": "high" if data["shops"] >= 3 else
                                                 "medium" if data["shops"] >= 2 else "low"})
     return result
