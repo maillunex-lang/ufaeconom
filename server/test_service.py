@@ -75,6 +75,25 @@ class StoreTests(unittest.TestCase):
         with self.assertRaises(Exception):
             self.store.authenticate(token)
 
+    def test_dynamic_third_user_and_single_writer(self) -> None:
+        self.store.create_user("third_user", "third-private-fixture-123", "thirdco",
+                               city="sterlitamak")
+        self.assertTrue(economy.audit_world(self.store.world))
+        token, actor = self.store.login("third_user", "third-private-fixture-123")
+        self.assertEqual(actor, "thirdco")
+        self.assertEqual(self.store.snapshot(actor)["company"], "thirdco")
+        self.assertEqual(self.store.world["facilities"]["thirdco-shop-starter"]["city"],
+                         "sterlitamak")
+        self.assertGreater(len(self.store.ledger(actor)), 0)
+        with self.assertRaises(RuntimeError):
+            WorldStore(self.db_path)
+        before = economy.copy_world(self.store.world)
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.store.create_user("third_user", "third-private-fixture-123",
+                                   "unusedco")
+        self.assertEqual(before, self.store.world)
+        self.assertEqual(self.store.authenticate(token), actor)
+
     def test_invalid_credentials(self) -> None:
         self.store.create_user("player_one", "123456789012safe", "player")
         with self.assertRaises(Exception):
@@ -169,6 +188,27 @@ class HTTPTests(unittest.TestCase):
         self.assertEqual(self.store.authenticate(a), "player")
         self.assertEqual(self.call("/v1/logout", {}, a)[0], 200)
         self.assertEqual(self.call("/v1/snapshot", token=a)[0], 401)
+
+    def test_third_client_can_open_independent_company(self) -> None:
+        self.store.create_user("third_user", "third-private-fixture-123",
+                               "thirdco", city="tuymazy")
+        status, login = self.call("/v1/login", {
+            "username": "third_user", "password": "third-private-fixture-123"})
+        self.assertEqual(status, 200)
+        token = login["token"]
+        code, snap = self.call("/v1/snapshot", token=token)
+        self.assertEqual(code, 200)
+        self.assertEqual(snap["company"], "thirdco")
+        self.assertIn("thirdco-shop-starter", snap["facilities"])
+        self.assertNotIn("player-shop", snap["facilities"])
+        cmd = {"command_id": "thirdco-0001", "expected_revision": snap["revision"],
+               "type": "facility.set_price", "facility_id": "thirdco-shop-starter",
+               "good": "bread", "price_minor": 14000}
+        self.assertEqual(self.call("/v1/command", cmd, token)[0], 200)
+        self.assertEqual(self.call("/v1/ledger", token=token)[0], 200)
+        self.assertEqual(self.call("/v1/command", {
+            **cmd, "command_id": "thirdco-0002", "facility_id": "player-shop"}, token)[0], 400)
+        self.assertTrue(economy.audit_world(self.store.world))
 
     def test_parallel_readers_and_rejected_trust(self) -> None:
         token = self.call("/v1/login", {"username": "player_one",
