@@ -100,7 +100,7 @@ class WorldStore:
         return hashlib.scrypt(password.encode("utf-8"), salt=salt, n=16384,
                               r=8, p=1, dklen=32)
 
-    def create_user(self, username: str, password: str, actor: str) -> None:
+    def create_user(self, username: str, password: str, actor: str, city: str = "ufa") -> None:
         # Privileged local CLI only. No public registration endpoint.
         if not _USER_RE.fullmatch(username) or len(password) < 12 or len(password) > 256:
             raise ValueError("username or password fails policy")
@@ -116,7 +116,7 @@ class WorldStore:
                 self.db.execute("INSERT INTO accounts VALUES(?,?,?,?,?)", account_row)
                 return
             candidate = economy.copy_world(self.world)
-            economy.register_company(candidate, actor)
+            economy.register_company(candidate, actor, city)
             self._save_world(candidate, lambda db: db.execute(
                 "INSERT INTO accounts VALUES(?,?,?,?,?)", account_row))
             self.world = candidate
@@ -228,7 +228,9 @@ class WorldStore:
             return economy.snapshot(self.world, actor)
 
     def ledger(self, actor: str, after_id: int = 0, limit: int = 50) -> list[dict]:
-        if actor not in ("player", "rival") or not 0 <= after_id <= 10**12:
+        if (not isinstance(actor, str) or actor == "npc" or
+                "company:" + actor not in self.world["wallets"] or
+                not 0 <= after_id <= 10**12):
             raise economy.EconomyError("invalid history cursor")
         ident = "company:" + actor
         with self.lock:
@@ -432,6 +434,7 @@ def main() -> None:
         elif name == "create-user":
             cmd.add_argument("--username", required=True)
             cmd.add_argument("--actor", required=True)
+            cmd.add_argument("--city", default="ufa", choices=economy.CITIES)
         elif name == "backup":
             cmd.add_argument("--output", required=True)
     args = parser.parse_args()
@@ -444,7 +447,7 @@ def main() -> None:
             serve(store, args.host, args.port)
         elif args.action == "create-user":
             password = getpass.getpass("New account password (12+ chars): ")
-            store.create_user(args.username, password, args.actor)
+            store.create_user(args.username, password, args.actor, args.city)
             print("account created")
         else:
             store.backup(args.output)
