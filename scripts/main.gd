@@ -11,6 +11,7 @@ const CompanyState = preload("res://scripts/company_state.gd")
 const Calendar = preload("res://scripts/game_calendar.gd")
 const MMOPanel = preload("res://scripts/mmo_panel.gd")
 const AndroidHUD074 = preload("res://scripts/android_hud_074.gd")
+const TycoonPanel077 = preload("res://scripts/tycoon_panel_077.gd")
 const SmartCity076 = preload("res://scripts/smart_city_076.gd")
 const AndroidPerformance076 = preload("res://scripts/android_performance_076.gd")
 const TILE_W := 96.0
@@ -51,6 +52,7 @@ var visual_quality := 1
 var construction_preview := ""
 var visual_detail := 1
 var android_hud: CanvasLayer
+var tycoon_panel: CanvasLayer
 var performance: Node
 
 func _ready() -> void:
@@ -68,6 +70,8 @@ func _ready() -> void:
 	_build_ui()
 	mmo_panel = MMOPanel.new()
 	add_child(mmo_panel)
+	tycoon_panel = TycoonPanel077.new()
+	add_child(tycoon_panel)
 	mmo_panel.client.snapshot_ready.connect(_on_world_snapshot)
 	mmo_panel.client.disconnected.connect(_on_world_logout)
 	company.load_game()
