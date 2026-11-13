@@ -4,6 +4,7 @@ const SafeArea = preload("res://scripts/mobile_safe_area.gd")
 const Land = preload("res://scripts/city_land.gd")
 const CityGenerator = preload("res://scripts/city_generator.gd")
 const BuildingArt = preload("res://scripts/building_art.gd")
+const CityDetail075 = preload("res://scripts/city_detail_075.gd")
 const CityLife25D = preload("res://scripts/city_life_25d.gd")
 const Atmosphere25D = preload("res://scripts/city_atmosphere_25d.gd")
 const CompanyState = preload("res://scripts/company_state.gd")
@@ -45,6 +46,8 @@ var city_label: Label
 var mmo_panel
 var atmosphere: Node2D
 var visual_quality := 1
+var construction_preview := ""
+var visual_detail := 1
 var android_hud: CanvasLayer
 
 func _ready() -> void:
@@ -84,6 +87,7 @@ func _load_city(index: int) -> void:
 	var data: Dictionary = CityGenerator.make_city(city_index)
 	cells = data["cells"]
 	selected = Vector2i(-1, -1)
+	construction_preview = ""
 	company.city_index = city_index
 	company.save_game()
 	city_label.text = "Город: %s (демонстрация)" % data["name"]
@@ -198,20 +202,25 @@ func _draw() -> void:
 				pos + Vector2(-TILE_W * 0.5, 0)
 			])
 			draw_colored_polygon(diamond, base)
+			CityDetail075.draw_ground(self, pos, tile, kind, camera.zoom.x)
 			draw_polyline(PackedVector2Array([diamond[0], diamond[1], diamond[2], diamond[3], diamond[0]]), Color("#527b61"), 0.8)
 			if road:
 				_draw_road(pos, x, y)
 			elif kind == "Дерево":
 				_draw_tree(pos)
 			elif COLORS.has(kind):
-				_draw_building(pos, kind)
+				CityDetail075.draw_building_shadow(self, pos, tile, camera.zoom.x)
+				_draw_building(pos, kind, tile)
 			if kind == "Свободный участок" and Land.has_ore(city_index, tile):
 				draw_circle(pos, 5.0, Color("#c28147"))
 			if plots.has(Land.plot_key(tile)):
 				var built: String = _building_at(tile)
 				if built != "":
-					_draw_building(pos, built)
+					CityDetail075.draw_building_shadow(self, pos, tile, camera.zoom.x)
+					_draw_building(pos, built, tile)
 				draw_circle(pos + Vector2(0, 10), 4, Color("#ffd55b") if _owns_plot(tile) else Color("#eabf9a"))
+			if selected == tile and construction_preview != "" and _owns_plot(tile) and _building_at(tile) == "":
+				BuildingArt.draw(self, pos, "НИИ" if construction_preview == "Исследовательский центр" else construction_preview, 1, true, CityDetail075.district(tile))
 			if selected == tile:
 				draw_polyline(PackedVector2Array([diamond[0], diamond[1], diamond[2], diamond[3], diamond[0]]), Color("#ffe175"), 3.0)
 
@@ -226,9 +235,10 @@ func _draw_tree(pos: Vector2) -> void:
 	draw_circle(pos + Vector2(0, -29), 15, Color("#3e8153"))
 	draw_circle(pos + Vector2(-6, -34), 9, Color("#58a46a"))
 
-func _draw_building(pos: Vector2, kind: String) -> void:
-	# Cosmetic-only 2.5D building art; authoritative ownership stays unchanged.
-	BuildingArt.draw(self, pos, "НИИ" if kind == "Исследовательский центр" else kind)
+func _draw_building(pos: Vector2, kind: String, tile: Vector2i) -> void:
+	# Procedural visual level does not affect production, land ownership or server state.
+	BuildingArt.draw(self, pos, "НИИ" if kind == "Исследовательский центр" else kind, CityDetail075.level(tile, kind), false, CityDetail075.district(tile))
+	CityDetail075.draw_business_activity(self, pos, kind, camera.zoom.x)
 
 func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventScreenTouch:
@@ -284,6 +294,7 @@ func _select_at(screen_position: Vector2) -> void:
 	if not Land.is_open(_active_chunks(), tile):
 		return
 	selected = tile
+	construction_preview = ""
 	var kind: String = Land.kind_at(city_index, tile)
 	info.text = "Участок %d:%d • %s%s" % [tile.x, tile.y, kind, " • руда" if Land.has_ore(city_index, tile) else ""]
 	message_label.text = ""
@@ -310,7 +321,10 @@ func _update_actions() -> void:
 			for building_type in CompanyState.CONSTRUCTION:
 				if building_type == "Шахта" and not Land.has_ore(city_index, selected):
 					continue
-				_add_action("Построить %s (%d ₽)" % [building_type, CompanyState.CONSTRUCTION[building_type]], _construct.bind(building_type))
+				_add_action("Выбрать %s (%d ₽)" % [building_type, CompanyState.CONSTRUCTION[building_type]], _preview_construction.bind(building_type))
+			if construction_preview != "":
+				_add_action("Подтвердить: %s" % construction_preview, _confirm_preview)
+				_add_action("Отменить предпросмотр", _cancel_preview)
 		else:
 			info.text = "Ваш участок %d:%d • %s" % [selected.x, selected.y, building]
 			if building in ["Шахта", "Исследовательский центр", "Автосалон"]:
@@ -334,7 +348,30 @@ func _buy_land() -> void:
 	_update_actions()
 	queue_redraw()
 
+func _preview_construction(kind: String) -> void:
+	if selected.x < 0 or not _owns_plot(selected) or _building_at(selected) != "" or not CompanyState.CONSTRUCTION.has(kind):
+		return
+	if kind == "Шахта" and not Land.has_ore(city_index, selected):
+		return
+	construction_preview = kind
+	message_label.text = "Предпросмотр: %s • подтверждение не отправлено" % kind
+	_update_actions()
+	queue_redraw()
+
+func _cancel_preview() -> void:
+	construction_preview = ""
+	_update_actions()
+	queue_redraw()
+
+func _confirm_preview() -> void:
+	if construction_preview == "" or selected.x < 0 or not _owns_plot(selected) or _building_at(selected) != "":
+		return
+	var kind := construction_preview
+	construction_preview = ""
+	_construct(kind)
+
 func _construct(kind: String) -> void:
+	construction_preview = ""
 	if mmo_panel != null and mmo_panel.online_active():
 		mmo_panel.client.send_command("facility.build", {"city": Land.CITY_IDS[city_index], "kind": Land.SERVER_KINDS[kind], "x": selected.x, "y": selected.y})
 		return
@@ -430,6 +467,7 @@ func _find_free_plot(ore_only: bool = false) -> void:
 		message_label.text = "Нет подходящих свободных участков в открытых кварталах"
 		return
 	selected = tile
+	construction_preview = ""
 	camera.position = _iso(Vector2(tile))
 	info.text = "Участок %d:%d • свободен%s" % [tile.x, tile.y, " • руда" if Land.has_ore(city_index, tile) else ""]
 	_update_actions()

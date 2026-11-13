@@ -13,6 +13,7 @@ var details_text: Label
 var local_panels: Array[Control] = []
 var local_open := false
 var mmo_open := false
+var visual_quality := 1
 
 func _ready() -> void:
     layer = 20
@@ -39,6 +40,7 @@ func _ready() -> void:
     _button(nav, "Города", func(): game._load_city(game.city_index + 1))
     _button(nav, "MMO", _toggle_mmo)
     _button(nav, "Меню", _toggle_local)
+    _button(nav, "Детали", _cycle_quality)
     details_text = _label(details, "Нажмите на участок для информации", 15)
     details.visible = false
     get_viewport().size_changed.connect(_layout)
@@ -84,6 +86,12 @@ func attach_legacy() -> void:
             panel.visible = false
     _set_mmo_visible(false)
     update_values()
+
+func _cycle_quality() -> void:
+    visual_quality = (visual_quality + 1) % 3
+    game.get_node("CityLife25D").detail_quality = visual_quality
+    game.atmosphere.set_quality(visual_quality)
+    game.message_label.text = ["Детали: экономия", "Детали: баланс", "Детали: максимум"][visual_quality]
 
 func _toggle_local() -> void:
     local_open = not local_open
