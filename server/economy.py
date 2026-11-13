@@ -55,6 +55,8 @@ NPC_OWNERS = ("npc", "npc_auto")
 NPC_MAX_BUILDINGS = 6
 NPC_DECISION_INTERVAL = TICKS_PER_DAY
 NPC_BUILD_INTERVAL = TICKS_PER_MONTH
+NPC_STRATEGIES = {"npc": "value", "npc_auto": "growth"}
+MARKET_WINDOW_DAYS = 30
 
 
 class EconomyError(ValueError):
@@ -114,6 +116,7 @@ def new_world(epoch_unix: int = 1800000000) -> dict:
         "stats": {"sales": 0, "units_sold": 0, "delivered": 0,
                   "produced": 0, "blocked": 0, "days_closed": 0},
         "last_sales": {}, "month_reports": [],
+        "market_daily": [], "market_today": {}, "market_totals": {},
         "company_metrics": {owner: {"revenue": 0, "cogs": 0,
                                      "operating_expense": 0, "freight": 0,
                                      "capital_expenditure": 0, "profit": 0}
@@ -157,6 +160,9 @@ def migrate_industry(w: dict) -> None:
     w.setdefault("next_contract", 1)
     w.setdefault("npc_decisions", [])
     w.setdefault("npc_next_action", NPC_DECISION_INTERVAL)
+    w.setdefault("market_daily", [])
+    w.setdefault("market_today", {})
+    w.setdefault("market_totals", {})
 
 
 def register_company(w: dict, actor: str, city: str = "ufa") -> None:
@@ -255,6 +261,17 @@ def audit_world(w: dict) -> bool:
                     - a["converted_in"] - a["consumed"])
         if stock[good] != expected:
             return False
+    if (type(w.get("market_daily", [])) is not list or
+            len(w.get("market_daily", [])) > MARKET_WINDOW_DAYS or
+            type(w.get("market_today", {})) is not dict or
+            type(w.get("market_totals", {})) is not dict):
+        return False
+    for record in w.get("market_daily", []):
+        if (type(record) is not dict or
+                any(type(v) is not int or v < 0 for v in record.values())):
+            return False
+    if any(type(v) is not int or v < 0 for v in w.get("market_today", {}).values()):
+        return False
     if (type(w.get("npc_next_action", NPC_DECISION_INTERVAL)) is not int or
             w.get("npc_next_action", NPC_DECISION_INTERVAL) < 1 or
             len(w.get("npc_decisions", [])) > 80):
@@ -511,6 +528,8 @@ def _retail(w: dict) -> None:
                 w["audit"][good]["consumed"] += qty
                 w["stats"]["sales"] += receipt
                 w["stats"]["units_sold"] += qty
+                market_key = city + ":" + good + ":" + fac["owner"]
+                w["market_today"][market_key] = w["market_today"].get(market_key, 0) + qty
                 recent[fac["id"] + ":" + good] = {"units": qty, "revenue": receipt,
                                                   "cost_basis": cost}
                 affordable -= receipt
@@ -551,12 +570,12 @@ def advance(w: dict, ticks: int = 1) -> None:
         _deliver(w)
         _produce(w)
         _local_restock(w)
-        if w["tick"] % TICKS_PER_DAY == 0:
-            _npc_reprice(w)
-        _retail(w)
         if w["tick"] >= w.get("npc_next_action", NPC_DECISION_INTERVAL):
             _npc_decide(w)
             w["npc_next_action"] = w["tick"] + NPC_DECISION_INTERVAL
+        _retail(w)
+        if w["tick"] % TICKS_PER_DAY == 0:
+            _market_close_day(w)
         if w["tick"] % TICKS_PER_MONTH == 0:
             _close_month(w)
         w["revision"] += 1
@@ -597,6 +616,42 @@ def _accept_contract(w: dict, actor: str, ident: str, destination_id: str) -> di
     w["next_shipment"] += 1
     contract.update({"buyer": actor, "to": dest["id"], "status": "in_transit", "eta_tick": eta})
     return {"ok": True, "contract_id": ident, "eta_tick": eta, "fee_minor": fee}
+
+
+def _market_close_day(w: dict) -> None:
+    daily = w.setdefault("market_daily", [])
+    daily.append(w.get("market_today", {}))
+    del daily[:-MARKET_WINDOW_DAYS]
+    w["market_today"] = {}
+    totals = {}
+    for day in daily:
+        for key, units in day.items():
+            totals[key] = totals.get(key, 0) + units
+    w["market_totals"] = totals
+
+
+def market_report(w: dict) -> dict:
+    """Public actual units sold in rolling 30 days, never fabricated demand."""
+    totals = w.get("market_totals", {})
+    report = {}
+    for city in CITIES:
+        report[city] = {}
+        for good in ("bread", "milk", "flour"):
+            by_owner = {}
+            for key, units in totals.items():
+                if key.startswith(city + ":" + good + ":"):
+                    owner = key[len(city + ":" + good + ":"):]
+                    by_owner[owner] = by_owner.get(owner, 0) + units
+            total = sum(by_owner.values())
+            report[city][good] = {
+                "demand_per_tick": DEMAND[city][good],
+                "units_sold_30d": total,
+                "share_bps": {owner: units * 10000 // total for owner, units
+                              in sorted(by_owner.items())} if total else {},
+                "active_shops": sum(1 for f in w["facilities"].values()
+                                    if f["city"] == city and f["kind"] == "shop"),
+            }
+    return report
 
 
 def _npc_event(w: dict, owner: str, action: str, detail: str) -> None:
@@ -640,7 +695,7 @@ def _npc_decide(w: dict) -> None:
             "operating_expense": 0, "freight": 0, "capital_expenditure": 0,
             "profit": 0}
         _money(w, "treasury:central", "company:npc_auto",
-               160_000_000, "company.starter_grant", "npc_auto")
+               260_000_000, "company.starter_grant", "npc_auto")
         _npc_event(w, "npc_auto", "entry", "new competitor")
     for owner in NPC_OWNERS:
         own = sorted((f for f in w["facilities"].values() if f["owner"] == owner),
@@ -659,18 +714,25 @@ def _npc_decide(w: dict) -> None:
                 fac["production_target"] = min(2, MAX_PRODUCTION_BATCH)
                 fac["workers"] = 8
             if fac["kind"] == "shop":
+                strategy = NPC_STRATEGIES[owner]
                 for good in ("bread", "milk", "flour"):
                     rivals = [f["prices"][good] for f in w["facilities"].values()
                               if f["city"] == fac["city"] and f["kind"] == "shop"
-                              and f["owner"] not in NPC_OWNERS and f["stock"][good] > 0]
-                    if rivals:
-                        target = min(rivals) - 100
-                        floor = BASE_PRICES[good] * 7 // 10
-                        ceiling = BASE_PRICES[good] * 3 // 2
-                        old = fac["prices"][good]
-                        step = max(1, old // 100)
-                        fac["prices"][good] = max(floor, min(ceiling,
-                            old + max(-step, min(step, target - old))))
+                              and f["owner"] != owner and f["stock"][good] > 0]
+                    if not rivals:
+                        continue
+                    # Value NPC undercuts; growth NPC targets the median competitor.
+                    target = (min(rivals) - 100 if strategy == "value"
+                              else sorted(rivals)[len(rivals) // 2])
+                    floor = BASE_PRICES[good] * 7 // 10
+                    ceiling = BASE_PRICES[good] * 3 // 2
+                    old = fac["prices"][good]
+                    step = max(1, old // 100)
+                    new_price = max(floor, min(ceiling,
+                        old + max(-step, min(step, target - old))))
+                    if new_price != old:
+                        fac["prices"][good] = new_price
+                        _npc_event(w, owner, "reprice", fac["city"] + ":" + good)
         # NPC may buy only competitively priced real player offers.
         dest = next((f for f in own if f["kind"] in ("factory", "shop", "warehouse")), None)
         if dest:
@@ -699,12 +761,29 @@ def _npc_decide(w: dict) -> None:
                     "quantity": 4, "price_minor": BASE_PRICES["bread"],
                     "status": "offered"}
                 _npc_event(w, owner, "contract.offer", ident)
-        # Once per game month, expand only if budget and cap allow.
+        # Invest in the city with the largest observed unmet demand.
+        # No construction when the budget, plot or building cap is exhausted.
         if w["tick"] % NPC_BUILD_INTERVAL == 0 and len(own) < NPC_MAX_BUILDINGS:
-            kinds = [f["kind"] for f in own]
-            kind = "shop" if kinds.count("factory") > kinds.count("shop") else "factory"
-            city = "sterlitamak" if owner == "npc_auto" else "tuymazy"
-            _npc_build(w, owner, city, kind)
+            strategy = NPC_STRATEGIES[owner]
+            report = market_report(w)
+            ranked = []
+            for city in CITIES:
+                own_shops = sum(f["kind"] == "shop" and f["city"] == city for f in own)
+                own_factories = sum(f["kind"] == "factory" and f["city"] == city for f in own)
+                observed = report[city]["bread"]["units_sold_30d"]
+                days = max(1, len(w["market_daily"]))
+                potential = DEMAND[city]["bread"] * TICKS_PER_DAY * days
+                gap = max(0, potential - observed)
+                if strategy == "value":
+                    score = gap - own_shops * 40
+                else:
+                    score = potential + gap - own_shops * 60
+                ranked.append((-score, city, own_shops, own_factories))
+            for _, city, shops, factories in sorted(ranked):
+                kind = "factory" if factories < shops else "shop"
+                if _npc_build(w, owner, city, kind):
+                    _npc_event(w, owner, "expansion.strategy", strategy + ":" + city)
+                    break
 
 
 def apply_command(w: dict, actor: str, command: dict) -> dict:
@@ -934,8 +1013,10 @@ def snapshot(w: dict, actor: str) -> dict:
         "facilities": own,
         "land": public_land,
         "shipments": copy.deepcopy([s for s in w["shipments"] if s["owner"] == actor]),
-        "market": market, "stats": copy.deepcopy(w["stats"]),
-        "npc_competitors": [{"owner": owner,
+        "market": market, "market_analytics": market_report(w),
+        "market_window_days": len(w.get("market_daily", [])),
+        "stats": copy.deepcopy(w["stats"]),
+        "npc_competitors": [{"owner": owner, "strategy": NPC_STRATEGIES[owner],
             "facilities": sum(1 for f in w["facilities"].values() if f["owner"] == owner),
             "cash_minor": w["wallets"].get("company:" + owner, 0),
             "latest_action": next((ev["action"] + ": " + ev["detail"]
