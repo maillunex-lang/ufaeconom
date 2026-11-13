@@ -52,18 +52,28 @@ var terrain_cache_misses := 0
 var static_chunk_nodes: Dictionary = {}
 var chunk_sync_elapsed := 0.0
 var chunk_sync_requested := true
+var last_chunk_camera_position := Vector2.INF
+var last_chunk_camera_zoom := -1.0
+var last_chunk_quality := -1
+var last_chunk_visible := Rect2i()
 
 func _clear_chunk_canvases() -> void:
 	for node in static_chunk_nodes.values():
 		node.queue_free()
 	static_chunk_nodes.clear()
 	chunk_sync_requested = true
+	last_chunk_visible = Rect2i()
+	last_chunk_camera_position = Vector2.INF
 
 func _sync_chunk_canvases() -> void:
 	if camera == null:
 		return
 	var visible := _visible_tile_rect()
-	var budget := CityDetail075.detail_budget(camera.zoom.x, performance.level if performance != null else 1)
+	last_chunk_visible = visible
+	last_chunk_camera_position = camera.position
+	last_chunk_camera_zoom = camera.zoom.x
+	last_chunk_quality = performance.level if performance != null else 1
+	var budget := CityDetail075.detail_budget(camera.zoom.x, last_chunk_quality)
 	if performance != null and performance.level == 0:
 		budget = 0
 	var opened: Dictionary = {}
@@ -553,7 +563,12 @@ func _process(delta: float) -> void:
 	if camera == null:
 		return
 	chunk_sync_elapsed += delta
-	if chunk_sync_requested or chunk_sync_elapsed >= 0.18:
+	# Update immediately when the camera enters a new tile range, zoom changes,
+	# or Android quality switches. Avoid blank terrain while panning quickly.
+	var quality: int = performance.level if performance != null else 1
+	var camera_changed := camera.position.distance_squared_to(last_chunk_camera_position) > 256.0
+	var zoom_changed := absf(camera.zoom.x - last_chunk_camera_zoom) > 0.005
+	if chunk_sync_requested or quality != last_chunk_quality or zoom_changed or (camera_changed and _visible_tile_rect() != last_chunk_visible) or chunk_sync_elapsed >= 0.25:
 		chunk_sync_elapsed = 0.0
 		chunk_sync_requested = false
 		_sync_chunk_canvases()
