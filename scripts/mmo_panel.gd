@@ -3,6 +3,7 @@ class_name BusinessMMOPanel
 
 ## The multiplayer economy is a separate server-owned balance.
 ## Do not present local CompanyState as synchronized MMO inventory.
+const SafeArea = preload("res://scripts/mobile_safe_area.gd")
 const Client = preload("res://scripts/mmo_client.gd")
 var client
 var status_label: Label
@@ -19,36 +20,42 @@ func _ready() -> void:
 	client.command_ready.connect(_on_command)
 	client.request_failed.connect(_on_error)
 	client.disconnected.connect(_on_logout)
-	var panel := PanelContainer.new()
-	panel.position = Vector2(810, 385)
-	panel.custom_minimum_size = Vector2(455, 290)
-	add_child(panel)
-	var content := VBoxContainer.new()
-	panel.add_child(content)
+	var safe = SafeArea.new()
+	safe.name = "MMOSafeArea"
+	add_child(safe)
+	var content: VBoxContainer = safe.add_panel("MMOPanel", 455.0, 600.0, true, true)
+	safe.call_deferred("refresh")
 	var heading := Label.new()
+	heading.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	heading.text = "🌐 MMO • СЕРВЕРНАЯ ЭКОНОМИКА 24/7"
 	content.add_child(heading)
 	server_input = LineEdit.new()
+	server_input.custom_minimum_size.y = 48.0
 	server_input.placeholder_text = "HTTPS-адрес игрового сервера"
 	content.add_child(server_input)
 	user_input = LineEdit.new()
+	user_input.custom_minimum_size.y = 48.0
 	user_input.placeholder_text = "Логин серверной компании"
 	content.add_child(user_input)
 	password_input = LineEdit.new()
+	password_input.custom_minimum_size.y = 48.0
 	password_input.placeholder_text = "Пароль"
 	password_input.secret = true
 	content.add_child(password_input)
 	var access := HBoxContainer.new()
 	content.add_child(access)
 	var enter := Button.new()
+	enter.custom_minimum_size.y = 48.0
 	enter.text = "Войти"
 	enter.pressed.connect(_login)
 	access.add_child(enter)
 	var refresh := Button.new()
+	refresh.custom_minimum_size.y = 48.0
 	refresh.text = "Обновить"
 	refresh.pressed.connect(func() -> void: client.fetch_snapshot())
 	access.add_child(refresh)
 	var leave := Button.new()
+	leave.custom_minimum_size.y = 48.0
 	leave.text = "Выйти"
 	leave.pressed.connect(func() -> void: client.disconnect_client())
 	access.add_child(leave)
@@ -62,10 +69,12 @@ func _ready() -> void:
 	var actions := HBoxContainer.new()
 	content.add_child(actions)
 	var price := Button.new()
+	price.custom_minimum_size.y = 48.0
 	price.text = "Цена хлеба −5%"
 	price.pressed.connect(_reduce_price)
 	actions.add_child(price)
 	var cargo := Button.new()
+	cargo.custom_minimum_size.y = 48.0
 	cargo.text = "🚚 Отправить 5 хлеба"
 	cargo.pressed.connect(_send_cargo)
 	actions.add_child(cargo)
