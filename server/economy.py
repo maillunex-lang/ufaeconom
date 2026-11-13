@@ -86,6 +86,10 @@ def new_world(epoch_unix: int = 1800000000) -> dict:
         "stats": {"sales": 0, "units_sold": 0, "delivered": 0,
                   "produced": 0, "blocked": 0, "days_closed": 0},
         "last_sales": {}, "month_reports": [],
+        "company_metrics": {owner: {"revenue": 0, "cogs": 0,
+                                     "operating_expense": 0, "freight": 0,
+                                     "capital_expenditure": 0, "profit": 0}
+                            for owner in ("player", "rival", "npc")},
     }
     for good in GOODS:
         audit[good]["initial"] = goods_total(w)[good]
@@ -166,6 +170,20 @@ def _money(w: dict, payer: str, payee: str, amount: int, kind: str,
         return
     w["wallets"][payer] -= amount
     w["wallets"][payee] += amount
+    if payer.startswith("company:"):
+        owner = payer.split(":", 1)[1]
+        metrics = w["company_metrics"][owner]
+        if kind == "construction":
+            metrics["capital_expenditure"] += amount
+        elif kind not in ("inventory.purchase",):
+            metrics["operating_expense"] += amount
+            metrics["profit"] -= amount
+            if kind == "freight":
+                metrics["freight"] += amount
+    if payee.startswith("company:") and kind == "retail.sale":
+        metrics = w["company_metrics"][payee.split(":", 1)[1]]
+        metrics["revenue"] += amount
+        metrics["profit"] += amount
     w["pending_ledger"].append({
         "tick": w["tick"], "debit": payer, "credit": payee,
         "amount": amount, "kind": kind, "ref": ref,
@@ -303,6 +321,9 @@ def _retail(w: dict) -> None:
                 if qty <= 0:
                     continue
                 cost = _take(fac, good, qty)
+                metrics = w["company_metrics"][fac["owner"]]
+                metrics["cogs"] += cost
+                metrics["profit"] -= cost
                 receipt = qty * price
                 _money(w, "residents:" + city, "company:" + fac["owner"],
                        receipt, "retail.sale", fac["id"])
@@ -371,7 +392,7 @@ def apply_command(w: dict, actor: str, command: dict) -> dict:
         if existing["fingerprint"] != fingerprint:
             raise EconomyError("command id reused with different payload")
         return copy.deepcopy(existing["result"])
-    if command.get("expected_revision") != w["revision"]:
+    if type(command.get("expected_revision")) is not int or command["expected_revision"] != w["revision"]:
         raise EconomyError("stale world revision")
     kind = command.get("type")
     fac_id = command.get("facility_id")
@@ -384,7 +405,7 @@ def apply_command(w: dict, actor: str, command: dict) -> dict:
     if kind == "facility.set_price":
         good = command.get("good")
         price = command.get("price_minor")
-        if (fac["kind"] != "shop" or good not in ("bread", "milk") or
+        if (fac["kind"] != "shop" or not isinstance(good, str) or good not in ("bread", "milk") or
                 type(price) is not int or
                 not BASE_PRICES[good] * 7 // 10 <= price <= BASE_PRICES[good] * 3 // 2):
             raise EconomyError("invalid offer")
@@ -392,7 +413,7 @@ def apply_command(w: dict, actor: str, command: dict) -> dict:
         result = {"ok": True, "price_minor": price}
     elif kind == "facility.buy":
         good, quantity = command.get("good"), command.get("quantity")
-        if (good not in SOURCE_PRICES or type(quantity) is not int or
+        if (not isinstance(good, str) or good not in SOURCE_PRICES or type(quantity) is not int or
                 not 1 <= quantity <= 100):
             raise EconomyError("invalid purchase")
         capacity_left = fac["capacity"] - sum(fac["stock"].values()) - _inbound(w, fac["id"])
@@ -410,7 +431,7 @@ def apply_command(w: dict, actor: str, command: dict) -> dict:
         dst = w["facilities"].get(destination_id)
         good, amount = command.get("good"), command.get("quantity")
         if (dst is None or dst["owner"] != actor or dst["id"] == fac_id or
-                good not in GOODS or type(amount) is not int or
+                not isinstance(good, str) or good not in GOODS or type(amount) is not int or
                 not 1 <= amount <= TRANSPORT_CAPACITY):
             raise EconomyError("invalid shipment")
         distance = route_km(fac["city"], dst["city"])
@@ -434,7 +455,7 @@ def apply_command(w: dict, actor: str, command: dict) -> dict:
                   "fee_minor": fee, "eta_tick": w["tick"] + eta_ticks(distance)}
     elif kind == "facility.build":
         city, facility_type = command.get("city"), command.get("kind")
-        if city not in CITIES or facility_type not in BUILD_COSTS:
+        if not isinstance(city, str) or not isinstance(facility_type, str) or city not in CITIES or facility_type not in BUILD_COSTS:
             raise EconomyError("invalid construction")
         if sum(1 for f in w["facilities"].values()
                if f["owner"] == actor and f["city"] == city) >= 32:
@@ -480,4 +501,5 @@ def snapshot(w: dict, actor: str) -> dict:
         "facilities": own,
         "shipments": copy.deepcopy([s for s in w["shipments"] if s["owner"] == actor]),
         "market": market, "stats": copy.deepcopy(w["stats"]),
+        "company_metrics": copy.deepcopy(w["company_metrics"][actor]),
     }
