@@ -275,8 +275,8 @@ func _construct(kind: String) -> void:
 func _advance_day() -> void:
 	var report: Dictionary = company.advance_day()
 	var cashflow: int = int(report.get("cashflow", 0))
-	message_label.text = "День %d: выручка %d ₽, расходы %d ₽, денежный результат %+d ₽" % [
-		int(report["day"]), int(report["revenue"]), int(report["expenses"]), cashflow
+	message_label.text = "День %d: выручка %d ₽, прибыль %+d ₽, денежный поток %+d ₽" % [
+		int(report["day"]), int(report["revenue"]), int(report["profit"]), cashflow
 	]
 	_update_actions()
 	queue_redraw()
@@ -291,7 +291,8 @@ func _refresh_economy_ui() -> void:
 	var city_market: Dictionary = company.market(city_index)
 	var stock: Dictionary = city_market["stock"]
 	var daily: Dictionary = company.last_report.get("cities", {}).get(str(city_index), {})
-	var realized: int = int(daily.get("revenue", 0)) - int(daily.get("expenses", 0))
+	var realized: int = int(daily.get("profit", 0))
+	var flow: int = int(daily.get("revenue", 0)) - int(daily.get("expenses", 0))
 	var city_name: String = CityGenerator.CITIES[city_index]["name"]
 	economy_label.text = (
 		"%s • День %d (авто: 15 секунд)\n" % [city_name, company.day] +
