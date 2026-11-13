@@ -46,7 +46,7 @@ func _ready() -> void:
     _button(nav, "MMO", _toggle_mmo)
     _button(nav, "Меню", _toggle_local)
     _button(nav, "Детали", _cycle_quality)
-    _button(nav, "Бизнес", _toggle_business)
+    _button(nav, "Бизнес", func(): game.tycoon_panel.toggle())
     _button(nav, "Авто FPS", _toggle_auto)
     details_text = _label(details, "Нажмите на участок для информации", 15)
     details.visible = false
