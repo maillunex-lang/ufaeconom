@@ -1,0 +1,34 @@
+extends SceneTree
+const Sim = preload("res://scripts/authoritative_economy.gd")
+const Calendar = preload("res://scripts/game_calendar.gd")
+func _initialize() -> void:
+	var epoch: int = 1800000000
+	var a: Dictionary = Sim.create_world(epoch)
+	var b: Dictionary = Sim.create_world(epoch)
+	assert(Sim.due_ticks(a, epoch - 100) == 0)
+	assert(Sim.advance(a, epoch + 2879)["processed"] == 0)
+	assert(Sim.money_total(a) == 100000)
+	assert(Sim.goods_total(a) == 10000)
+	var command: Dictionary = {"command_id":"request-1", "expected_tick":0, "type":"supply.set_daily_limit", "limit":12}
+	assert(Sim.apply_command(a, command)["ok"])
+	assert(Sim.apply_command(b, command)["ok"])
+	assert(Sim.apply_command(a, command)["daily_limit"] == 12)
+	assert(Sim.apply_command(a, {"command_id":"request-1", "expected_tick":0, "type":"supply.set_daily_limit", "limit":100})["daily_limit"] == 12)
+	assert(not Sim.apply_command(a, {"command_id":"request-2", "expected_tick":5, "type":"supply.set_daily_limit", "limit":30})["ok"])
+	var start_money: int = Sim.money_total(a)
+	var start_goods: int = Sim.goods_total(a)
+	var final_now: int = epoch + Calendar.REAL_SECONDS_PER_GAME_DAY * 365
+	for i in range(5):
+		var result_a: Dictionary = Sim.advance(a, final_now)
+		var result_b: Dictionary = Sim.advance(b, final_now)
+		assert(result_a == result_b)
+	assert(a["tick"] == 365)
+	assert(a == b)
+	assert(Sim.money_total(a) == start_money)
+	assert(Sim.goods_total(a) == start_goods)
+	assert(Sim.advance(a, final_now)["processed"] == 0)
+	assert(Sim.advance(a, final_now)["pending"] == 0)
+	assert(int(a["wallets"]["player"]) >= 0)
+	assert(int(a["stock"]["supplier"]) >= 0)
+	print("AUTHORITY_24X7_TESTS_PASSED 365days deterministic=1 idempotent=1 conserved=1")
+	quit(0)
