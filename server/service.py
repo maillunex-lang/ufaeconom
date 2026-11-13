@@ -108,7 +108,7 @@ class WorldStore:
             raise ValueError("username or password fails policy")
         if (not isinstance(actor, str) or
                 re.fullmatch(r"[a-z][a-z0-9_-]{2,24}", actor) is None or
-                actor == "npc"):
+                actor in economy.NPC_OWNERS):
             raise ValueError("invalid player company ID")
         salt = secrets.token_bytes(16)
         digest = self._hash_password(password, salt)
@@ -230,7 +230,7 @@ class WorldStore:
             return economy.snapshot(self.world, actor)
 
     def ledger(self, actor: str, after_id: int = 0, limit: int = 50) -> list[dict]:
-        if (not isinstance(actor, str) or actor == "npc" or
+        if (not isinstance(actor, str) or actor in economy.NPC_OWNERS or
                 "company:" + actor not in self.world["wallets"] or
                 not 0 <= after_id <= 10**12):
             raise economy.EconomyError("invalid history cursor")
