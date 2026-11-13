@@ -42,7 +42,7 @@ func _ready() -> void:
     tabs = TabContainer.new()
     tabs.custom_minimum_size.y = 320
     body.add_child(tabs)
-    for tab in ["Обзор", "Производство", "Персонал", "Продажи", "Логистика", "Финансы", "Контракты"]:
+    for tab in ["Обзор", "Производство", "Персонал", "Продажи", "Логистика", "Финансы", "Контракты", "Конкуренты"]:
         var scroll := ScrollContainer.new()
         scroll.name = tab
         tabs.add_child(scroll)
@@ -189,6 +189,19 @@ func refresh() -> void:
         if contract.get("status") == "offered" and str(contract.get("seller", "")) != str(snapshot.get("company", "")):
             contract_picker.add_item(str(contract.get("id", "")) + " " + str(contract.get("good", "")))
             contract_picker.set_item_metadata(contract_picker.item_count - 1, str(contract.get("id", "")))
+    var competitors: Array = snapshot.get("npc_competitors", [])
+    labels[7].text = "NPC-компании работают на сервере.\nОбновление решений: 1 игровой день."
+    for competitor in competitors:
+        labels[7].text += "\n\n%s • %d предприятий\nКапитал: %d коп.\nДействие: %s" % [
+            str(competitor.get("owner", "")), int(competitor.get("facilities", 0)),
+            int(competitor.get("cash_minor", 0)), str(competitor.get("latest_action", ""))]
+    var activity: Array = snapshot.get("npc_activity", [])
+    if not activity.is_empty():
+        labels[7].text += "\n\nСОБЫТИЯ РЫНКА"
+        for event in activity.slice(maxi(0, activity.size() - 8)):
+            labels[7].text += "\nДень %d • %s: %s" % [
+                int(int(event.get("tick", 0)) / 12), str(event.get("owner", "")),
+                str(event.get("detail", ""))]
     labels[5].text = "Выручка: %d коп.\nСебестоимость: %d коп.\nРасходы: %d коп.\nЛогистика: %d коп.\nПрибыль: %d коп." % [int(metrics.get("revenue", 0)), int(metrics.get("cogs", 0)), int(metrics.get("operating_expense", 0)), int(metrics.get("freight", 0)), int(metrics.get("profit", 0))]
     var history: Array = snapshot.get("finance_history", [])
     for entry in history.slice(maxi(0, history.size() - 5)):
