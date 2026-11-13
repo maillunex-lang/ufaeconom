@@ -6,6 +6,7 @@ const H := 48.0
 var city: Node2D
 var clock := 0.0
 var redraw_clock := 0.0
+var detail_quality := 1
 
 func _ready() -> void:
     city = get_parent()
@@ -14,7 +15,7 @@ func _ready() -> void:
 func _process(delta: float) -> void:
     clock += delta
     redraw_clock += delta
-    if redraw_clock >= 0.12:
+    if redraw_clock >= (0.24 if detail_quality == 0 else 0.12 if detail_quality == 1 else 0.08):
         redraw_clock = 0.0
         queue_redraw()
 
@@ -30,6 +31,8 @@ func _draw() -> void:
     for key in chunks:
         open[key] = true
     var vehicle_count := 0
+    var max_vehicles := 12 if detail_quality == 0 else 32 if detail_quality == 1 else 48
+    var max_people := 10 if detail_quality == 0 else 32 if detail_quality == 1 else 48
     var people_count := 0
     # Only the visible road tiles are inspected; no nodes per road or actor.
     for y in range(rect.position.y,rect.end.y):
@@ -41,18 +44,25 @@ func _draw() -> void:
                 continue
             var road_x := x % 7 == 0
             var road_y := y % 7 == 0
-            if (x*13+y*19) % 11 == 0 and vehicle_count < 32:
+            if (x*13+y*19) % 11 == 0 and vehicle_count < max_vehicles:
                 var phase := fposmod(clock*(0.42+float((x+y)%3)*0.09)+float((x*7+y)%17)*0.31,1.0)
                 var next := Vector2(x+phase,y) if road_y else Vector2(x,y+phase)
+                var neighbor := Vector2i(x+1,y) if road_y else Vector2i(x,y+1)
+                if not open.has(Land.chunk_key(neighbor)) or Land.kind_at(city.city_index,neighbor) != "Дорога":
+                    next = Vector2(x,y)
                 var pos := _iso(next)
                 var direction := Vector2(W*0.5,H*0.5) if road_y else Vector2(-W*0.5,H*0.5)
                 var tint := Color("#dfb879") if (x+y)%3==0 else Color("#7cb7cb")
+                if detail_quality >= 1:
+                    draw_circle(pos + Vector2(0, 2), 5.0, Color(0.1, 0.15, 0.17, 0.25))
                 draw_colored_polygon(PackedVector2Array([pos+Vector2(0,-5),pos+Vector2(7,-2),pos+Vector2(7,2),pos+Vector2(0,0)]),tint)
                 draw_line(pos,pos+direction.normalized()*7.0,Color("#415668"),2.0)
                 vehicle_count += 1
-            if (x*17+y*23)%13 == 0 and people_count < 32:
+            if (x*17+y*23)%13 == 0 and people_count < max_people:
                 var phase2 := fposmod(clock*0.19+float((x+y)%9)*0.21,1.0)
-                var p := _iso(Vector2(x+phase2,y) if road_y else Vector2(x,y+phase2))
+                var neighbor2 := Vector2i(x+1,y) if road_y else Vector2i(x,y+1)
+                var can_walk := open.has(Land.chunk_key(neighbor2)) and Land.kind_at(city.city_index,neighbor2) == "Дорога"
+                var p := _iso(Vector2(x+phase2,y) if road_y and can_walk else Vector2(x,y+phase2) if can_walk else Vector2(x,y))
                 p += Vector2(0,-8)
                 draw_circle(p,2.4,Color("#ead4b4"))
                 draw_line(p+Vector2(0,2),p+Vector2(0,7),Color("#5b7792"),2.0)
