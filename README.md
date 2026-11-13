@@ -33,7 +33,7 @@ godot --headless --path . --export-debug Android build/BusinessEmpireOnline-0.4-
 
 ### Подтверждённые проверки
 - На Lunex: импорт проекта и короткий headless-запуск под Godot 4.6 завершились с exit code 0.
-- Версия 0.3 собрана на Lunex 13 ноября 2026; подпись v2/v3 проверена. Для 0.4 проверка APK производится отдельно.
+- Версия 0.3 собрана на Lunex 13 ноября 2026; подпись v2/v3 проверена. Версия 0.4 успешно собрана 13 ноября 2026 года в Godot 4.6 на Lunex; `apksigner` подтвердил подпись v2/v3 и пакет `com.ufaeconom.business` с `versionCode=4`, `versionName=0.4.0`.
 - Установка/работа на реальном Android-устройстве ещё не проверены.
 
 ## Дальнейшая разработка
@@ -43,6 +43,14 @@ godot --headless --path . --export-debug Android build/BusinessEmpireOnline-0.4-
 
 Версия 0.3: https://rikagro.ru/agrogame/download/BusinessEmpireOnline-0.3-debug.apk
 
-Версия 0.4: появится после успешной Android-сборки и проверки подписи.
+Версия 0.4: https://rikagro.ru/agrogame/download/BusinessEmpireOnline-0.4-debug.apk
 
-Для 0.4 добавлен скрипт `tests/economy_04.gd` с проверкой 91 игрового дня, экономики запасов, сохранения, денег и кнопок интерфейса. Тесты должны запускаться до сборки APK. Реальный Android-девайс ещё не тестировался.
+Для 0.4 добавлен скрипт `tests/economy_04.gd` с проверкой 91 игрового дня, финансового учёта, вместимости склада, сырьевого дефицита, сохранения, денег и кнопок интерфейса. Проверка Godot 4.6 на Lunex пройдена без SCRIPT ERROR; для Android подписаны APK Signature v2 и v3. Установка на физический Android и игровой баланс живых игроков пока не проверены.
+
+### Проверка экономики
+```bash
+godot --headless --path . --editor --quit
+godot --headless --path . --script res://tests/economy_04.gd
+```
+
+В версии 0.4 установлен собственный векторный значок игры `icon.svg`. `Android` preset использует `versionCode=4`, `versionName=0.4.0`.
