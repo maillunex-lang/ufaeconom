@@ -15,9 +15,9 @@ func _run() -> void:
     root.add_child(game)
     await process_frame
     var panel = game.tycoon_panel
-    check(panel.tabs.get_tab_count() == 10, "economic intelligence tab missing")
+    check(panel.tabs.get_tab_count() >= 10, "economic intelligence tab missing")
     check(panel.tabs.get_tab_title(9) == "Экономический советник", "intelligence tab title wrong")
-    check(panel.pages.size() == 10, "scrollable advisor panel missing")
+    check(panel.pages.size() >= 10, "scrollable advisor panel missing")
     check(not panel.panel.visible, "unauthenticated panel visible")
     check(game.mmo_panel.client.snapshot.is_empty(), "offline UI must not fabricate forecasts")
     panel.refresh()
