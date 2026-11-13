@@ -441,6 +441,20 @@ def main() -> None:
     db_path = Path(args.db)
     if not db_path.parent.exists():
         parser.error("database parent directory must exist")
+    if args.action == "backup":
+        # SQLite online backup reads a consistent WAL snapshot, without
+        # taking a second authoritative writer lease or stopping 24/7 ticks.
+        if not db_path.exists() or db_path.resolve() == Path(args.output).resolve():
+            parser.error("invalid backup source or destination")
+        source = sqlite3.connect("file:" + str(db_path.resolve()) + "?mode=ro", uri=True)
+        destination = sqlite3.connect(args.output)
+        try:
+            source.backup(destination)
+        finally:
+            destination.close()
+            source.close()
+        print("backup completed")
+        return
     store = WorldStore(db_path)
     try:
         if args.action == "run":
@@ -449,9 +463,6 @@ def main() -> None:
             password = getpass.getpass("New account password (12+ chars): ")
             store.create_user(args.username, password, args.actor, args.city)
             print("account created")
-        else:
-            store.backup(args.output)
-            print("backup completed")
     finally:
         store.close()
 
