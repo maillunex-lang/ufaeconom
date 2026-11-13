@@ -635,11 +635,17 @@ def _district_shop_rank(fac: dict, district: tuple[int, int], good: str, urban: 
 def _retail(w: dict) -> None:
     recent = {}
     urban_cache = {}
+    # Index active shops once per tick, not once per city/product combination.
+    shops_by_city = {city: [] for city in CITIES}
+    for fac in w["facilities"].values():
+        if fac["kind"] == "shop" and fac["city"] in shops_by_city:
+            shops_by_city[fac["city"]].append(fac)
     for city in CITIES:
+        city_shops = shops_by_city[city]
+        if not city_shops:
+            continue
         for good in ("bread", "milk", "flour"):
-            shops = [fac for fac in w["facilities"].values()
-                     if fac["kind"] == "shop" and fac["city"] == city
-                     and fac["stock"][good] > 0]
+            shops = [fac for fac in city_shops if fac["stock"][good] > 0]
             if not shops:
                 continue
             best_price = min(fac["prices"][good] for fac in shops)
@@ -649,6 +655,8 @@ def _retail(w: dict) -> None:
             allocations = _allocate_district_demand(demand, weights)
             affordable = w["wallets"]["residents:" + city]
             for district, district_demand in allocations.items():
+                if district_demand <= 0 or affordable <= 0:
+                    continue
                 cache_key = (city, district)
                 if cache_key not in urban_cache:
                     urban_cache[cache_key] = _district_urban_metrics(w, city, district)
