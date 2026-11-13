@@ -3,6 +3,7 @@ extends Node2D
 const CityGenerator = preload("res://scripts/city_generator.gd")
 const CompanyState = preload("res://scripts/company_state.gd")
 const Calendar = preload("res://scripts/game_calendar.gd")
+const MMOPanel = preload("res://scripts/mmo_panel.gd")
 const TILE_W := 96.0
 const TILE_H := 48.0
 const MAP_SIZE := 32
@@ -32,6 +33,7 @@ var moved_since_press := false
 var last_mouse := Vector2.ZERO
 var info: Label
 var city_label: Label
+var mmo_panel
 
 func _ready() -> void:
 	camera = Camera2D.new()
@@ -40,6 +42,8 @@ func _ready() -> void:
 	add_child(camera)
 	camera.make_current()
 	_build_ui()
+	mmo_panel = MMOPanel.new()
+	add_child(mmo_panel)
 	company.load_game()
 	var catchup: Dictionary = company.sync_calendar(int(Time.get_unix_time_from_system()))
 	_load_city(company.city_index)
@@ -75,7 +79,7 @@ func _build_ui() -> void:
 	var content := VBoxContainer.new()
 	panel.add_child(content)
 	var title := Label.new()
-	title.text = "BUSINESS EMPIRE ONLINE • КАЛЕНДАРЬ 0.6"
+	title.text = "BUSINESS EMPIRE ONLINE • 0.7 BETA"
 	content.add_child(title)
 	city_label = Label.new()
 	content.add_child(city_label)
@@ -102,7 +106,7 @@ func _build_ui() -> void:
 	var market_content := VBoxContainer.new()
 	market_panel.add_child(market_content)
 	var market_title := Label.new()
-	market_title.text = "ЭКОНОМИКА ХОЛДИНГА • ПРОТОТИП"
+	market_title.text = "ЭКОНОМИКА • ЛОКАЛЬНАЯ ДЕМОНСТРАЦИЯ"
 	market_content.add_child(market_title)
 	economy_label = Label.new()
 	economy_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -262,12 +266,18 @@ func _add_action(title: String, callback: Callable) -> void:
 	actions.add_child(button)
 
 func _buy_land() -> void:
+	if mmo_panel != null and mmo_panel.online_active():
+		message_label.text = "Участки на локальной карте не меняют серверную собственность."
+		return
 	var kind: String = cells.get(selected, "Свободный участок")
 	message_label.text = company.buy(city_index, selected, kind)
 	_update_actions()
 	queue_redraw()
 
 func _construct(kind: String) -> void:
+	if mmo_panel != null and mmo_panel.online_active():
+		message_label.text = "Строительство MMO выполняется серверными командами."
+		return
 	message_label.text = company.construct(city_index, selected, kind)
 	_update_actions()
 	queue_redraw()
@@ -289,6 +299,9 @@ func _advance_day() -> void:
 	queue_redraw()
 
 func _send_bread() -> void:
+	if mmo_panel != null and mmo_panel.online_active():
+		message_label.text = "Для серверной логистики используйте панель MMO справа."
+		return
 	var target := (city_index + 1) % CityGenerator.CITIES.size()
 	message_label.text = company.send_goods(city_index, target, "Хлеб", 10)
 	_update_actions()

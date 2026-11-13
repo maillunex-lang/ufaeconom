@@ -23,6 +23,16 @@ class Economy06Tests(unittest.TestCase):
             **kwargs,
         })
 
+    def test_npc_reacts_to_visible_competitor_prices(self) -> None:
+        self.issue("offer-npc-001", "facility.set_price",
+                   facility_id="player-shop", good="bread", price_minor=12000)
+        old = self.w["facilities"]["npc-shop"]["prices"]["bread"]
+        econ.advance(self.w, econ.TICKS_PER_DAY)
+        new = self.w["facilities"]["npc-shop"]["prices"]["bread"]
+        self.assertLess(new, old)
+        self.assertGreaterEqual(new, econ.BASE_PRICES["bread"] * 7 // 10)
+        self.assertTrue(econ.audit_world(self.w))
+
     def test_price_distance_ownership_competition(self) -> None:
         econ.advance(self.w)
         self.assertIn("npc-shop:bread", self.w["last_sales"])

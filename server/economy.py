@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import copy
 import json
+import re
 
 GOODS = ("grain", "bread", "milk")
 CITIES = ("ufa", "sterlitamak", "tuymazy", "beloretsk")
@@ -47,8 +48,8 @@ def _facility(owner: str, city: str, kind: str, ident: str,
         "stock": {good: int((stock or {}).get(good, 0)) for good in GOODS},
         "basis": {good: 0 for good in GOODS}, "capacity": CAPACITY[kind],
         "prices": {"bread": BASE_PRICES["bread"], "milk": BASE_PRICES["milk"]},
-        "reputation": 70 if owner == "player" else 60,
-        "customer_distance_km": 3 if owner == "player" else 7,
+        "reputation": 70 if owner != "npc" else 60,
+        "customer_distance_km": 3 if owner != "npc" else 7,
         "auto_buy_limit": 2 if kind == "factory" else 0,
     }
 
@@ -57,7 +58,8 @@ def new_world(epoch_unix: int = 1800000000) -> dict:
     if epoch_unix <= 0:
         raise EconomyError("epoch must be positive")
     wallets = {"company:player": 200_000_000, "company:rival": 200_000_000,
-               "company:npc": 200_000_000}
+               "company:npc": 200_000_000,
+               "treasury:central": 100_000_000_000}
     suppliers, facilities = {}, {}
     for city in CITIES:
         wallets[f"residents:{city}"] = 20_000_000
@@ -95,6 +97,30 @@ def new_world(epoch_unix: int = 1800000000) -> dict:
         audit[good]["initial"] = goods_total(w)[good]
     w["initial_money"] = money_total(w)
     return w
+
+
+def register_company(w: dict, actor: str, city: str = "ufa") -> None:
+    """Admin-only onboarding. A finite central development pool funds starters."""
+    if (not isinstance(actor, str) or
+            re.fullmatch(r"[a-z][a-z0-9_-]{2,24}", actor) is None or
+            actor == "npc" or city not in CITIES or
+            "company:" + actor in w["wallets"]):
+        raise EconomyError("invalid new company")
+    opening = 200_000_000
+    if w["wallets"]["treasury:central"] < opening:
+        raise EconomyError("development fund exhausted")
+    w["wallets"]["company:" + actor] = 0
+    w["company_metrics"][actor] = {"revenue": 0, "cogs": 0,
+                                    "operating_expense": 0, "freight": 0,
+                                    "capital_expenditure": 0, "profit": 0}
+    _money(w, "treasury:central", "company:" + actor,
+           opening, "company.starter_grant", actor)
+    for kind in ("factory", "shop"):
+        ident = actor + "-" + kind + "-starter"
+        _money(w, "company:" + actor, "suppliers:" + city,
+               BUILD_COSTS[kind], "construction", ident)
+        w["facilities"][ident] = _facility(actor, city, kind, ident)
+    w["revision"] += 1
 
 
 def copy_world(world: dict) -> dict:
@@ -281,7 +307,7 @@ def _produce(w: dict) -> None:
 
 
 def _local_restock(w: dict) -> None:
-    for owner in ("npc", "player", "rival"):
+    for owner in sorted({f["owner"] for f in w["facilities"].values()}):
         for city in CITIES:
             factories = sorted((f for f in w["facilities"].values()
                                 if f["owner"] == owner and f["city"] == city
@@ -296,6 +322,25 @@ def _local_restock(w: dict) -> None:
                     if count > 0:
                         basis = _take(factory, "bread", count)
                         _put(shop, "bread", count, basis)
+
+
+def _npc_reprice(w: dict) -> None:
+    """Bounded 1%-per-day NPC responses to other shops' *public* prices."""
+    for fac in w["facilities"].values():
+        if fac["owner"] != "npc" or fac["kind"] != "shop":
+            continue
+        for good in ("bread", "milk"):
+            rivals = [other["prices"][good] for other in w["facilities"].values()
+                      if other["city"] == fac["city"] and other["kind"] == "shop"
+                      and other["owner"] != "npc" and other["stock"][good] > 0]
+            if not rivals:
+                continue
+            old = fac["prices"][good]
+            desired = min(rivals) - 100
+            maximum_delta = max(1, old // 100)
+            next_price = old + max(-maximum_delta, min(maximum_delta, desired - old))
+            fac["prices"][good] = max(BASE_PRICES[good] * 7 // 10,
+                                     min(BASE_PRICES[good] * 3 // 2, next_price))
 
 
 def _retail(w: dict) -> None:
@@ -365,6 +410,8 @@ def advance(w: dict, ticks: int = 1) -> None:
         _deliver(w)
         _produce(w)
         _local_restock(w)
+        if w["tick"] % TICKS_PER_DAY == 0:
+            _npc_reprice(w)
         _retail(w)
         if w["tick"] % TICKS_PER_MONTH == 0:
             _close_month(w)
@@ -378,7 +425,7 @@ def due_ticks(w: dict, server_now_unix: int) -> int:
 
 
 def apply_command(w: dict, actor: str, command: dict) -> dict:
-    if actor not in ("player", "rival"):
+    if not isinstance(actor, str) or actor == "npc" or "company:" + actor not in w["wallets"]:
         raise EconomyError("unknown actor")
     command_id = command.get("command_id")
     if not isinstance(command_id, str) or not (8 <= len(command_id) <= 120):
@@ -478,7 +525,8 @@ def apply_command(w: dict, actor: str, command: dict) -> dict:
 
 
 def snapshot(w: dict, actor: str) -> dict:
-    if actor not in ("player", "npc"):
+    if (not isinstance(actor, str) or actor == "npc" or
+            "company:" + actor not in w["wallets"]):
         raise EconomyError("unknown actor")
     own = {fid: copy.deepcopy(fac) for fid, fac in w["facilities"].items()
            if fac["owner"] == actor}
