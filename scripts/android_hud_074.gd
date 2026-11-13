@@ -30,6 +30,16 @@ var business_title: Label
 var business_actions: HBoxContainer
 var settings_button: Button
 var compact_layout := false
+var construction_panel: PanelContainer
+var construction_title: Label
+var construction_status: Label
+var construction_cost: Label
+var construction_buttons: HBoxContainer
+var construction_confirm: Button
+var construction_cancel: Button
+var construction_buy: Button
+var construction_picker: OptionButton
+var construction_toggle: Button
 const UI_MIN_TOUCH := 48.0
 
 func _ready() -> void:
@@ -59,6 +69,36 @@ func _ready() -> void:
     business_box.add_child(business_actions)
     _button(business_actions, "Управление", func() -> void: game.tycoon_panel.toggle())
     business_panel.visible = false
+    construction_panel = _panel("ConstructionCard")
+    var construction_box := VBoxContainer.new()
+    construction_box.add_theme_constant_override("separation", 8)
+    construction_panel.add_child(construction_box)
+    construction_title = _label(construction_box, "СТРОИТЕЛЬСТВО", 19)
+    construction_status = _label(construction_box, "Выберите свободный участок", 15)
+    construction_cost = _label(construction_box, "", 16)
+    construction_picker = OptionButton.new()
+    construction_picker.custom_minimum_size = Vector2(210, 48)
+    construction_picker.item_selected.connect(_on_construction_choice)
+    construction_box.add_child(construction_picker)
+    construction_buttons = HBoxContainer.new()
+    construction_box.add_child(construction_buttons)
+    construction_buy = Button.new()
+    construction_buy.text = "Купить землю"
+    construction_buy.custom_minimum_size = Vector2(105, 48)
+    construction_buy.pressed.connect(func() -> void: game._buy_land())
+    construction_buttons.add_child(construction_buy)
+    construction_confirm = Button.new()
+    construction_confirm.text = "Построить"
+    construction_confirm.custom_minimum_size = Vector2(105, 48)
+    _style_button(construction_confirm, true)
+    construction_confirm.pressed.connect(func() -> void: game._confirm_preview())
+    construction_buttons.add_child(construction_confirm)
+    construction_cancel = Button.new()
+    construction_cancel.text = "Отмена"
+    construction_cancel.custom_minimum_size = Vector2(90, 48)
+    construction_cancel.pressed.connect(func() -> void: game._cancel_preview())
+    construction_buttons.add_child(construction_cancel)
+    construction_panel.visible = false
     var header := HBoxContainer.new()
     header.add_theme_constant_override("separation", 16)
     top.add_child(header)
@@ -92,6 +132,13 @@ func _ready() -> void:
     camera_home.custom_minimum_size = Vector2(56, 56)
     safe.add_child(camera_home)
     camera_home.pressed.connect(_center_city)
+    construction_toggle = Button.new()
+    construction_toggle.name = "PlotHighlight"
+    construction_toggle.text = "Участки"
+    construction_toggle.custom_minimum_size = Vector2(94, 48)
+    _style_button(construction_toggle, false)
+    construction_toggle.pressed.connect(_toggle_plot_highlights)
+    safe.add_child(construction_toggle)
     menu_backdrop = ColorRect.new()
     menu_backdrop.name = "MenuBackdrop"
     menu_backdrop.color = Color("#07151fc9")
@@ -159,6 +206,57 @@ func _button(parent: Node, content: String, action: Callable) -> void:
     button.pressed.connect(action)
     parent.add_child(button)
 
+func _toggle_plot_highlights() -> void:
+    game.show_available_plots = not game.show_available_plots
+    construction_toggle.set_pressed_no_signal(game.show_available_plots)
+    game.queue_redraw()
+
+
+func _on_construction_choice(index: int) -> void:
+    if index < 0 or index >= construction_picker.item_count:
+        return
+    var kind := construction_picker.get_item_text(index)
+    game._preview_construction(kind)
+
+
+func update_construction() -> void:
+    if game == null or game.selected.x < 0 or menu_open:
+        construction_panel.visible = false
+        return
+    var tile: Vector2i = game.selected
+    var built: String = game._building_at(tile)
+    var owned: bool = game._owns_plot(tile)
+    var free: bool = game.Land.kind_at(game.city_index, tile) == "Свободный участок"
+    var already_claimed: bool = game._city_plots().has(game.Land.plot_key(tile))
+    construction_panel.visible = built == "" and (owned or free and not already_claimed)
+    if not construction_panel.visible:
+        return
+    construction_title.text = "МОЙ УЧАСТОК" if owned else "СВОБОДНАЯ ЗЕМЛЯ"
+    construction_status.text = "Участок %d:%d • %s" % [tile.x, tile.y, "можно строить" if owned else "доступен для покупки"]
+    construction_buy.visible = not owned
+    construction_picker.visible = owned
+    construction_confirm.visible = owned and game.construction_preview != ""
+    construction_cancel.visible = construction_confirm.visible
+    construction_picker.clear()
+    if owned:
+        var chosen := -1
+        for kind in game.CompanyState.CONSTRUCTION:
+            if kind == "Шахта" and not game.Land.has_ore(game.city_index, tile):
+                continue
+            construction_picker.add_item(str(kind))
+            if str(kind) == game.construction_preview:
+                chosen = construction_picker.item_count - 1
+        if chosen >= 0:
+            construction_picker.select(chosen)
+        else:
+            construction_picker.select(-1)
+    var cost: int = game.CompanyState.LAND_PRICE if not owned else int(game.CompanyState.CONSTRUCTION.get(game.construction_preview, 0))
+    construction_cost.text = "Цена участка: %d ₽" % cost if not owned else "Стоимость строительства: %d ₽" % cost if game.construction_preview != "" else "Выберите тип здания"
+    var wallet: int = int(game.mmo_panel.client.snapshot.get("cash_minor", 0)) / 100 if game._online_land() else game.company.cash
+    construction_buy.disabled = not owned and wallet < cost
+    construction_confirm.disabled = owned and (cost > wallet or game.construction_preview == "")
+
+
 func _menu_button(title: String, action: Callable) -> void:
     var b := Button.new()
     b.text = title
@@ -208,6 +306,7 @@ func _close_panels() -> void:
         panel.visible = false
     _set_mmo_visible(false)
     business_panel.visible = false
+    construction_panel.visible = false
     if game.tycoon_panel != null and game.tycoon_panel.visible:
         game.tycoon_panel.visible = false
 
@@ -369,6 +468,7 @@ func update_values() -> void:
     else:
         business_panel.visible = false
         details.visible = false
+    update_construction()
     _layout()
 
 func _layout() -> void:
@@ -393,6 +493,8 @@ func _layout() -> void:
     bottom.size = Vector2(w, bottom_height)
     camera_home.position = Vector2(0, maxf(62, h - bottom_height - 62))
     camera_home.size = Vector2(52, 52)
+    construction_toggle.position = Vector2(58, maxf(62, h - bottom_height - 60))
+    construction_toggle.size = Vector2(94, 48)
     menu_backdrop.position = Vector2.ZERO
     menu_backdrop.size = Vector2(w, h)
     var menu_width := minf(470, w * 0.78)
@@ -405,3 +507,6 @@ func _layout() -> void:
     var card_width := minf(360, w * 0.42)
     business_panel.position = Vector2(maxf(0, w - card_width), 66)
     business_panel.size = Vector2(card_width, minf(240, h * 0.47))
+    var construction_width := minf(370, w * 0.48)
+    construction_panel.position = Vector2(maxf(0, w - construction_width), 66)
+    construction_panel.size = Vector2(construction_width, minf(265, maxf(120, h - bottom_height - 78)))
