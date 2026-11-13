@@ -9,6 +9,7 @@ from __future__ import annotations
 import copy
 import json
 import re
+from . import land
 
 GOODS = ("grain", "bread", "milk")
 CITIES = ("ufa", "sterlitamak", "tuymazy", "beloretsk")
@@ -25,8 +26,8 @@ ROUTE_KM = {
 }
 BASE_PRICES = {"grain": 5000, "bread": 15500, "milk": 18000}
 SOURCE_PRICES = {"grain": 5000, "milk": 11000}
-BUILD_COSTS = {"factory": 80000000, "shop": 35000000, "warehouse": 28000000}
-CAPACITY = {"factory": 120, "shop": 90, "warehouse": 300}
+BUILD_COSTS = {"factory": 80000000, "shop": 35000000, "warehouse": 28000000, "mine": 70000000, "research_center": 60000000, "car_dealership": 50000000}
+CAPACITY = {"factory": 120, "shop": 90, "warehouse": 300, "mine": 120, "research_center": 80, "car_dealership": 90}
 DEMAND = {
     "ufa": {"bread": 6, "milk": 3},
     "sterlitamak": {"bread": 4, "milk": 2},
@@ -96,6 +97,7 @@ def new_world(epoch_unix: int = 1800000000) -> dict:
     for good in GOODS:
         audit[good]["initial"] = goods_total(w)[good]
     w["initial_money"] = money_total(w)
+    land.ensure_world(w)
     return w
 
 
@@ -120,6 +122,7 @@ def register_company(w: dict, actor: str, city: str = "ufa") -> None:
         _money(w, "company:" + actor, "suppliers:" + city,
                BUILD_COSTS[kind], "construction", ident)
         w["facilities"][ident] = _facility(actor, city, kind, ident)
+    land.ensure_world(w)
     w["revision"] += 1
 
 
@@ -185,7 +188,7 @@ def audit_world(w: dict) -> bool:
                     - a["converted_in"] - a["consumed"])
         if stock[good] != expected:
             return False
-    return True
+    return land.audit(w)
 
 
 def _money(w: dict, payer: str, payee: str, amount: int, kind: str,
@@ -199,7 +202,7 @@ def _money(w: dict, payer: str, payee: str, amount: int, kind: str,
     if payer.startswith("company:"):
         owner = payer.split(":", 1)[1]
         metrics = w["company_metrics"][owner]
-        if kind == "construction":
+        if kind in ("construction", "land.purchase"):
             metrics["capital_expenditure"] += amount
         elif kind not in ("inventory.purchase",):
             metrics["operating_expense"] += amount
@@ -441,6 +444,7 @@ def apply_command(w: dict, actor: str, command: dict) -> dict:
         return copy.deepcopy(existing["result"])
     if type(command.get("expected_revision")) is not int or command["expected_revision"] != w["revision"]:
         raise EconomyError("stale world revision")
+    land.ensure_world(w)
     kind = command.get("type")
     fac_id = command.get("facility_id")
     if fac_id is not None and not isinstance(fac_id, str):
@@ -500,22 +504,63 @@ def apply_command(w: dict, actor: str, command: dict) -> dict:
         })
         result = {"ok": True, "shipment_id": shipment_id,
                   "fee_minor": fee, "eta_tick": w["tick"] + eta_ticks(distance)}
+    elif kind == "land.buy":
+        city, x, y = command.get("city"), command.get("x"), command.get("y")
+        if not isinstance(city, str) or city not in CITIES:
+            raise EconomyError("unknown city")
+        layout = w["land"][city]
+        if not land.is_open(layout["chunks"], x, y) or land.code_at(city, x, y) != 0:
+            raise EconomyError("parcel is not available land")
+        position = land.key(x, y)
+        if position in layout["plots"]:
+            raise EconomyError("parcel already owned")
+        if w["wallets"]["company:" + actor] < land.LAND_PRICE:
+            raise EconomyError("insufficient funds")
+        _money(w, "company:" + actor, "treasury:" + city, land.LAND_PRICE, "land.purchase", position)
+        layout["plots"][position] = {"owner": actor, "building": ""}
+        result = {"ok": True, "x": x, "y": y}
     elif kind == "facility.build":
         city, facility_type = command.get("city"), command.get("kind")
         if not isinstance(city, str) or not isinstance(facility_type, str) or city not in CITIES or facility_type not in BUILD_COSTS:
             raise EconomyError("invalid construction")
         if sum(1 for f in w["facilities"].values()
-               if f["owner"] == actor and f["city"] == city) >= 32:
+               if f["owner"] == actor and f["city"] == city) >= 512:
             raise EconomyError("city property cap reached")
+        layout = w["land"][city]
+        explicit = "x" in command or "y" in command
+        if explicit:
+            x, y = command.get("x"), command.get("y")
+            if not land.is_open(layout["chunks"], x, y):
+                raise EconomyError("parcel is outside open territory")
+            position = land.key(x, y)
+            plot = layout["plots"].get(position)
+            if plot is None or plot["owner"] != actor or plot["building"]:
+                raise EconomyError("empty owned parcel required")
+        else:
+            # Compatibility with pre-spatial 0.7 clients: select and buy a real parcel.
+            location = land.free_plot(city, layout["chunks"], layout["plots"], facility_type == "mine")
+            if location is None:
+                raise EconomyError("no free parcel")
+            x, y = location
+            position = land.key(x, y)
+        if facility_type == "mine" and not land.has_ore(city, x, y):
+            raise EconomyError("mine requires ore deposit")
         price = BUILD_COSTS[facility_type]
-        if w["wallets"]["company:" + actor] < price:
+        total = price + (0 if explicit else land.LAND_PRICE)
+        if w["wallets"]["company:" + actor] < total:
             raise EconomyError("insufficient funds")
         ident = actor + "-built-" + str(w["next_facility"])
+        if not explicit:
+            _money(w, "company:" + actor, "treasury:" + city, land.LAND_PRICE, "land.purchase", position)
+            layout["plots"][position] = {"owner": actor, "building": ""}
         w["next_facility"] += 1
-        _money(w, "company:" + actor, "suppliers:" + city,
-               price, "construction", ident)
-        w["facilities"][ident] = _facility(actor, city, facility_type, ident)
-        result = {"ok": True, "facility_id": ident}
+        _money(w, "company:" + actor, "suppliers:" + city, price, "construction", ident)
+        facility = _facility(actor, city, facility_type, ident)
+        facility["plot"] = {"x": x, "y": y}
+        w["facilities"][ident] = facility
+        layout["plots"][position]["building"] = ident
+        expanded = land.grow(city, layout["chunks"], layout["plots"], x, y)
+        result = {"ok": True, "facility_id": ident, "x": x, "y": y, "expanded": expanded}
     else:
         raise EconomyError("unsupported command")
     w["revision"] += 1
@@ -539,6 +584,10 @@ def snapshot(w: dict, actor: str) -> dict:
         ],
         "demand_per_tick": DEMAND[city],
     } for city in CITIES}
+    public_land = copy.deepcopy(w.get("land", {}))
+    for layout in public_land.values():
+        for plot in layout["plots"].values():
+            plot["kind"] = w["facilities"].get(plot.get("building", ""), {}).get("kind", "")
     return {
         "schema": w["schema"], "tick": w["tick"], "revision": w["revision"],
         "game_day": w["tick"] // TICKS_PER_DAY,
@@ -547,6 +596,7 @@ def snapshot(w: dict, actor: str) -> dict:
         "server_epoch_unix": w["epoch_unix"],
         "company": actor, "cash_minor": w["wallets"]["company:" + actor],
         "facilities": own,
+        "land": public_land,
         "shipments": copy.deepcopy([s for s in w["shipments"] if s["owner"] == actor]),
         "market": market, "stats": copy.deepcopy(w["stats"]),
         "company_metrics": copy.deepcopy(w["company_metrics"][actor]),

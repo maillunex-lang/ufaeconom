@@ -88,6 +88,7 @@ class WorldStore:
         row = self.db.execute("SELECT payload FROM world_state WHERE id=1").fetchone()
         if row:
             self.world = json.loads(row[0])
+            economy.land.ensure_world(self.world)
             if not economy.audit_world(self.world):
                 raise RuntimeError("saved economy invariant failure; refuse to serve")
         else:
