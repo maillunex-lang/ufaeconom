@@ -1,6 +1,7 @@
 extends Node2D
 ## Offline prototype 0.2: deterministic cities and layered procedural isometric art.
 const CityGenerator = preload("res://scripts/city_generator.gd")
+const CompanyState = preload("res://scripts/company_state.gd")
 const TILE_W := 96.0
 const TILE_H := 48.0
 const MAP_SIZE := 32
@@ -12,6 +13,10 @@ const COLORS := {
 	"Офис": Color("#a9bfc9")
 }
 
+var company = CompanyState.new()
+var money_label: Label
+var actions: VBoxContainer
+var message_label: Label
 var camera: Camera2D
 var selected := Vector2i(-1, -1)
 var city_index := 0
@@ -31,15 +36,19 @@ func _ready() -> void:
 	add_child(camera)
 	camera.make_current()
 	_build_ui()
-	_load_city(0)
+	company.load_game()
+	_load_city(company.city_index)
 
 func _load_city(index: int) -> void:
 	city_index = posmod(index, CityGenerator.CITIES.size())
 	var data: Dictionary = CityGenerator.make_city(city_index)
 	cells = data["cells"]
 	selected = Vector2i(-1, -1)
+	company.city_index = city_index
+	company.save_game()
 	city_label.text = "Город: %s (демонстрация)" % data["name"]
 	info.text = "Нажмите на участок или здание"
+	_update_actions()
 	camera.position = Vector2(0, 700)
 	queue_redraw()
 
@@ -48,17 +57,24 @@ func _build_ui() -> void:
 	add_child(layer)
 	var panel := PanelContainer.new()
 	panel.position = Vector2(16, 16)
-	panel.custom_minimum_size = Vector2(350, 150)
+	panel.custom_minimum_size = Vector2(360, 170)
 	layer.add_child(panel)
 	var content := VBoxContainer.new()
 	panel.add_child(content)
 	var title := Label.new()
-	title.text = "BUSINESS EMPIRE ONLINE • 0.2"
+	title.text = "BUSINESS EMPIRE ONLINE • 0.3"
 	content.add_child(title)
 	city_label = Label.new()
 	content.add_child(city_label)
+	money_label = Label.new()
+	content.add_child(money_label)
 	info = Label.new()
 	content.add_child(info)
+	message_label = Label.new()
+	message_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	content.add_child(message_label)
+	actions = VBoxContainer.new()
+	content.add_child(actions)
 	var button := Button.new()
 	button.text = "Следующий город"
 	button.pressed.connect(func() -> void: _load_city(city_index + 1))
@@ -94,6 +110,11 @@ func _draw() -> void:
 				_draw_tree(pos)
 			elif COLORS.has(kind):
 				_draw_building(pos, kind)
+			if company.owns(city_index, tile):
+				var built: String = company.building_at(city_index, tile)
+				if built != "":
+					_draw_building(pos, built)
+				draw_circle(pos + Vector2(0, 10), 4, Color("#ffd55b"))
 			if selected == tile:
 				draw_polyline(PackedVector2Array([diamond[0], diamond[1], diamond[2], diamond[3], diamond[0]]), Color("#ffe175"), 3.0)
 
@@ -180,4 +201,43 @@ func _select_at(screen_position: Vector2) -> void:
 	selected = tile
 	var kind: String = cells.get(tile, "Свободный участок")
 	info.text = "Участок %d:%d • %s" % [tile.x, tile.y, kind]
+	message_label.text = ""
+	_update_actions()
+	queue_redraw()
+
+func _update_actions() -> void:
+	if money_label == null or actions == null:
+		return
+	money_label.text = "Компания: Мой холдинг | Баланс: %d ₽ | Участков: %d" % [company.cash, company.owned.size()]
+	for child in actions.get_children():
+		actions.remove_child(child)
+		child.queue_free()
+	if selected.x < 0:
+		return
+	var kind: String = cells.get(selected, "Свободный участок")
+	if company.owns(city_index, selected):
+		var building := company.building_at(city_index, selected)
+		if building == "":
+			for building_type in ["Магазин", "Склад", "Завод"]:
+				_add_action("Построить %s (%d ₽)" % [building_type, CompanyState.CONSTRUCTION[building_type]], _construct.bind(building_type))
+		else:
+			info.text = "Ваш участок %d:%d • %s" % [selected.x, selected.y, building]
+	elif kind == "Свободный участок":
+		_add_action("Купить участок (%d ₽)" % CompanyState.LAND_PRICE, _buy_land)
+
+func _add_action(title: String, callback: Callable) -> void:
+	var button := Button.new()
+	button.text = title
+	button.pressed.connect(callback)
+	actions.add_child(button)
+
+func _buy_land() -> void:
+	var kind: String = cells.get(selected, "Свободный участок")
+	message_label.text = company.buy(city_index, selected, kind)
+	_update_actions()
+	queue_redraw()
+
+func _construct(kind: String) -> void:
+	message_label.text = company.construct(city_index, selected, kind)
+	_update_actions()
 	queue_redraw()
