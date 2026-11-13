@@ -11,8 +11,17 @@ import json
 import re
 from . import land
 
-GOODS = ("grain", "bread", "milk", "flour")
-RECIPES = {"bread": ("grain", 1, "bread", 2), "flour": ("grain", 1, "flour", 2), "bakery": ("flour", 1, "bread", 3)}
+GOODS = ("grain", "bread", "milk", "flour", "ore", "steel", "parts", "car")
+RECIPES = {
+    "bread": ("grain", 1, "bread", 2),
+    "flour": ("grain", 1, "flour", 2),
+    "bakery": ("flour", 1, "bread", 3),
+    "steel": ("ore", 2, "steel", 1),
+    "parts": ("steel", 1, "parts", 2),
+    "car": ("parts", 4, "car", 1),
+}
+RECIPE_MIN_EQUIPMENT = {"steel": 1, "parts": 2, "car": 3}
+INDUSTRIAL_GOODS = ("ore", "steel", "parts", "car")
 CITIES = ("ufa", "sterlitamak", "tuymazy", "beloretsk")
 TICK_SECONDS = 240
 TICKS_PER_DAY = 12
@@ -25,15 +34,15 @@ ROUTE_KM = {
     ("sterlitamak", "beloretsk"): 245,
     ("tuymazy", "beloretsk"): 410,
 }
-BASE_PRICES = {"grain": 5000, "bread": 15500, "milk": 18000, "flour": 10000}
+BASE_PRICES = {"grain": 5000, "bread": 15500, "milk": 18000, "flour": 10000, "ore": 12000, "steel": 38000, "parts": 29000, "car": 250000}
 SOURCE_PRICES = {"grain": 5000, "milk": 11000}
 BUILD_COSTS = {"factory": 80000000, "shop": 35000000, "warehouse": 28000000, "mine": 70000000, "research_center": 60000000, "car_dealership": 50000000}
 CAPACITY = {"factory": 120, "shop": 90, "warehouse": 300, "mine": 120, "research_center": 80, "car_dealership": 90}
 DEMAND = {
-    "ufa": {"bread": 6, "milk": 3, "flour": 2},
-    "sterlitamak": {"bread": 4, "milk": 2, "flour": 2},
-    "tuymazy": {"bread": 3, "milk": 2, "flour": 1},
-    "beloretsk": {"bread": 3, "milk": 1, "flour": 1},
+    "ufa": {"bread": 6, "milk": 3, "flour": 2, "car": 1},
+    "sterlitamak": {"bread": 4, "milk": 2, "flour": 2, "car": 1},
+    "tuymazy": {"bread": 3, "milk": 2, "flour": 1, "car": 1},
+    "beloretsk": {"bread": 3, "milk": 1, "flour": 1, "car": 1},
 }
 SALES_TAX_BPS = 500
 STAFF_CAP = {"factory": 20, "shop": 12, "warehouse": 8, "mine": 16, "research_center": 12, "car_dealership": 10}
@@ -54,7 +63,7 @@ def _facility(owner: str, city: str, kind: str, ident: str,
         "id": ident, "owner": owner, "city": city, "kind": kind,
         "stock": {good: int((stock or {}).get(good, 0)) for good in GOODS},
         "basis": {good: 0 for good in GOODS}, "capacity": CAPACITY[kind],
-        "prices": {good: BASE_PRICES[good] for good in ("bread", "milk", "flour")},
+        "prices": {good: BASE_PRICES[good] for good in ("bread", "milk", "flour", "car")},
         "reputation": 70 if owner != "npc" else 60,
         "customer_distance_km": 3 if owner != "npc" else 7,
         "auto_buy_limit": 2 if kind == "factory" else 0,
@@ -62,7 +71,7 @@ def _facility(owner: str, city: str, kind: str, ident: str,
         "production_target": 1, "recipe": "bread", "equipment_level": 1,
         "production_last_tick": 0,
         "production_last_units": 0,
-        "freight_priority": "standard",
+        "freight_priority": "standard", "storage_level": 0,
     }
 
 
@@ -97,6 +106,7 @@ def new_world(epoch_unix: int = 1800000000) -> dict:
         "wallets": wallets, "suppliers": suppliers, "facilities": facilities,
         "shipments": [], "next_shipment": 1, "next_facility": 1,
         "receipts": {}, "audit": audit, "pending_ledger": [], "finance_history": [],
+        "contracts": {}, "next_contract": 1,
         "stats": {"sales": 0, "units_sold": 0, "delivered": 0,
                   "produced": 0, "blocked": 0, "days_closed": 0},
         "last_sales": {}, "month_reports": [],
@@ -123,8 +133,22 @@ def migrate_industry(w: dict) -> None:
         fac["prices"].setdefault("flour", BASE_PRICES["flour"])
         fac.setdefault("recipe", "bread")
         fac.setdefault("equipment_level", 1)
+        fac.setdefault("storage_level", 0)
     for city in CITIES:
         w["suppliers"][city].setdefault("flour", 0)
+        for good in INDUSTRIAL_GOODS:
+            w["suppliers"][city].setdefault(good, 0)
+    for good in INDUSTRIAL_GOODS:
+        if good not in w["audit"]:
+            w["audit"][good] = {"initial": 0, "sourced": 0,
+                                  "converted_in": 0, "converted_out": 0, "consumed": 0}
+    for fac in w["facilities"].values():
+        for good in INDUSTRIAL_GOODS:
+            fac["stock"].setdefault(good, 0)
+            fac["basis"].setdefault(good, 0)
+        fac["prices"].setdefault("car", BASE_PRICES["car"])
+    w.setdefault("contracts", {})
+    w.setdefault("next_contract", 1)
 
 
 def register_company(w: dict, actor: str, city: str = "ufa") -> None:
@@ -207,6 +231,15 @@ def audit_world(w: dict) -> bool:
     for shipment in w["shipments"]:
         if shipment["amount"] <= 0 or shipment["basis"] < 0:
             return False
+    for contract in w.get("contracts", {}).values():
+        if (contract["seller"] == contract["buyer"] and contract["buyer"] or
+                contract["good"] not in GOODS or type(contract["quantity"]) is not int or
+                contract["quantity"] < 1 or type(contract["price_minor"]) is not int or
+                contract["price_minor"] < 1 or
+                contract["status"] not in ("offered", "in_transit", "delivered")):
+            return False
+        if contract["status"] == "in_transit" and w["wallets"].get("escrow:" + contract["id"], -1) != contract["quantity"] * contract["price_minor"]:
+            return False
     stock = goods_total(w)
     for good in GOODS:
         a = w["audit"][good]
@@ -218,7 +251,11 @@ def audit_world(w: dict) -> bool:
         staff = fac.get("workers", STAFF_BASE[fac["kind"]])
         wage = fac.get("wage_minor", WAGE_MINOR)
         target = fac.get("production_target", 1)
-        if (fac.get("recipe", "bread") not in RECIPES or
+        if (type(fac.get("storage_level", 0)) is not int or
+                not 0 <= fac.get("storage_level", 0) <= 5 or
+                (fac["kind"] == "warehouse" and
+                 fac["capacity"] != CAPACITY["warehouse"] + fac.get("storage_level", 0) * 100) or
+                fac.get("recipe", "bread") not in RECIPES or
                 type(fac.get("equipment_level", 1)) is not int or
                 not 1 <= fac.get("equipment_level", 1) <= 3):
             return False
@@ -242,7 +279,7 @@ def _money(w: dict, payer: str, payee: str, amount: int, kind: str,
         metrics = w["company_metrics"][owner]
         if kind in ("construction", "land.purchase", "equipment.purchase"):
             metrics["capital_expenditure"] += amount
-        elif kind not in ("inventory.purchase",):
+        elif kind not in ("inventory.purchase", "contract.escrow") :
             metrics["operating_expense"] += amount
             metrics["profit"] -= amount
             if kind == "freight":
@@ -323,6 +360,17 @@ def _deliver(w: dict) -> None:
             pending.append(cargo)
             continue
         _put(dest, cargo["good"], cargo["amount"], cargo["basis"])
+        if "contract_id" in cargo:
+            contract = w["contracts"][cargo["contract_id"]]
+            amount_minor = contract["quantity"] * contract["price_minor"]
+            _money(w, "escrow:" + contract["id"], "company:" + contract["seller"],
+                   amount_minor, "contract.settlement", contract["id"])
+            # Payment is income, goods basis is recognized at settlement.
+            metrics = w["company_metrics"][contract["seller"]]
+            metrics["revenue"] += amount_minor
+            metrics["cogs"] += cargo["seller_basis"]
+            metrics["profit"] += amount_minor - cargo["seller_basis"]
+            contract["status"] = "delivered"
         w["stats"]["delivered"] += cargo["amount"]
     w["shipments"] = pending
 
@@ -330,6 +378,17 @@ def _deliver(w: dict) -> None:
 def _produce(w: dict) -> None:
     for fac_id in sorted(w["facilities"]):
         fac = w["facilities"][fac_id]
+        if fac["kind"] == "mine":
+            # Ore deposits are tied to a built mine, not free global supplier stock.
+            if fac.get("plot") and fac["stock"]["ore"] < fac["capacity"]:
+                amount = min(2, fac["capacity"] - sum(fac["stock"].values()))
+                wage_cost = fac.get("wage_minor", WAGE_MINOR) * 2
+                payer = "company:" + fac["owner"]
+                if amount > 0 and fac.get("workers", 0) >= 2 and w["wallets"][payer] >= wage_cost:
+                    _money(w, payer, "residents:" + fac["city"], wage_cost, "wages", fac_id)
+                    _put(fac, "ore", amount, wage_cost)
+                    w["audit"]["ore"]["sourced"] += amount
+            continue
         if fac["kind"] != "factory":
             continue
         workers = fac.get("workers", STAFF_BASE["factory"])
@@ -340,6 +399,9 @@ def _produce(w: dict) -> None:
         units = min(MAX_PRODUCTION_BATCH, requested, workers // 4)
         recipe = fac.get("recipe", "bread")
         ingredient, input_qty, output_good, output_qty = RECIPES[recipe]
+        if equipment < RECIPE_MIN_EQUIPMENT.get(recipe, 1):
+            fac["production_last_units"] = 0
+            continue
         fac["production_last_tick"] = w["tick"]
         fac["production_last_units"] = 0
         for _ in range(units):
@@ -455,8 +517,8 @@ def _close_month(w: dict) -> None:
         paid = min(fee, w["wallets"][owner])
         _money(w, owner, "treasury:" + fac["city"], paid, "monthly.rent", fac["id"])
     for fac in w["facilities"].values():
-        if fac["kind"] == "factory":
-            continue  # Factories pay only for actual production batches.
+        if fac["kind"] in ("factory", "mine"):
+            continue  # Production and extraction pay per batch.
         salary = fac.get("workers", STAFF_BASE[fac["kind"]]) * fac.get("wage_minor", WAGE_MINOR)
         payer = "company:" + fac["owner"]
         paid = min(salary, w["wallets"][payer])
@@ -514,7 +576,7 @@ def apply_command(w: dict, actor: str, command: dict) -> dict:
     if fac_id is not None and not isinstance(fac_id, str):
         raise EconomyError("invalid facility id")
     fac = w["facilities"].get(fac_id)
-    if kind in ("facility.set_price", "facility.buy", "shipment.create", "facility.set_staff", "facility.set_production", "facility.set_recipe", "facility.upgrade_equipment"):
+    if kind in ("facility.set_price", "facility.buy", "shipment.create", "facility.set_staff", "facility.set_production", "facility.set_recipe", "facility.upgrade_equipment", "contract.offer", "facility.expand_storage"):
         if fac is None or fac["owner"] != actor:
             raise EconomyError("facility not owned")
     if kind == "facility.set_staff":
@@ -547,10 +609,63 @@ def apply_command(w: dict, actor: str, command: dict) -> dict:
                "equipment.purchase", fac_id)
         fac["equipment_level"] = level + 1
         result = {"ok": True, "equipment_level": level + 1, "cost_minor": cost}
+    elif kind == "facility.expand_storage":
+        level = fac.get("storage_level", 0)
+        cost = (level + 1) * 5_000_000
+        if fac["kind"] != "warehouse" or level >= 5 or w["wallets"]["company:" + actor] < cost:
+            raise EconomyError("warehouse expansion unavailable")
+        _money(w, "company:" + actor, "suppliers:" + fac["city"], cost,
+               "equipment.purchase", fac_id)
+        fac["storage_level"] = level + 1
+        fac["capacity"] += 100
+        result = {"ok": True, "capacity": fac["capacity"], "cost_minor": cost}
+    elif kind == "contract.offer":
+        good, quantity, price = command.get("good"), command.get("quantity"), command.get("price_minor")
+        if (type(good) is not str or good not in GOODS or
+                type(quantity) is not int or not 1 <= quantity <= TRANSPORT_CAPACITY or
+                type(price) is not int or not 1 <= price <= 10_000_000 or
+                sum(1 for c in w["contracts"].values() if c["seller"] == actor and c["status"] == "offered") >= 20):
+            raise EconomyError("invalid contract offer")
+        ident = "c" + str(w["next_contract"])
+        w["next_contract"] += 1
+        w["contracts"][ident] = {"id": ident, "seller": actor, "buyer": "",
+            "from": fac_id, "to": "", "good": good, "quantity": quantity,
+            "price_minor": price, "status": "offered"}
+        result = {"ok": True, "contract_id": ident}
+    elif kind == "contract.accept":
+        ident, destination_id = command.get("contract_id"), command.get("destination_id")
+        contract = w["contracts"].get(ident) if type(ident) is str else None
+        dest = w["facilities"].get(destination_id) if type(destination_id) is str else None
+        if (contract is None or contract["status"] != "offered" or
+                contract["seller"] == actor or dest is None or dest["owner"] != actor):
+            raise EconomyError("invalid contract acceptance")
+        source = w["facilities"].get(contract["from"])
+        if source is None or source["owner"] != contract["seller"]:
+            raise EconomyError("seller facility unavailable")
+        quantity, good = contract["quantity"], contract["good"]
+        total = quantity * contract["price_minor"]
+        fee = shipment_fee(route_km(source["city"], dest["city"]), quantity)
+        if (source["stock"][good] < quantity or
+                sum(dest["stock"].values()) + _inbound(w, dest["id"]) + quantity > dest["capacity"] or
+                w["wallets"]["company:" + actor] < total + fee):
+            raise EconomyError("insufficient contract resources")
+        escrow = "escrow:" + ident
+        w["wallets"][escrow] = 0
+        _money(w, "company:" + actor, escrow, total, "contract.escrow", ident)
+        _money(w, "company:" + actor, "suppliers:" + source["city"], fee, "freight", ident)
+        basis = _take(source, good, quantity)
+        eta = w["tick"] + eta_ticks(route_km(source["city"], dest["city"]))
+        w["shipments"].append({"id": "s" + str(w["next_shipment"]), "owner": actor,
+            "from": source["id"], "to": dest["id"], "good": good,
+            "amount": quantity, "basis": total, "seller_basis": basis, "eta_tick": eta,
+            "contract_id": ident, "status": "in_transit"})
+        w["next_shipment"] += 1
+        contract.update({"buyer": actor, "to": dest["id"], "status": "in_transit", "eta_tick": eta})
+        result = {"ok": True, "contract_id": ident, "eta_tick": eta, "fee_minor": fee}
     elif kind == "facility.set_price":
         good = command.get("good")
         price = command.get("price_minor")
-        if (fac["kind"] != "shop" or not isinstance(good, str) or good not in ("bread", "milk", "flour") or
+        if (fac["kind"] != "shop" or not isinstance(good, str) or good not in ("bread", "milk", "flour", "car") or
                 type(price) is not int or
                 not BASE_PRICES[good] * 7 // 10 <= price <= BASE_PRICES[good] * 3 // 2):
             raise EconomyError("invalid offer")
@@ -699,6 +814,8 @@ def snapshot(w: dict, actor: str) -> dict:
             if entry["debit"] == "company:" + actor or entry["credit"] == "company:" + actor
         ],
         "staff_limits": STAFF_CAP.copy(),
+        "contracts": copy.deepcopy([c for c in w.get("contracts", {}).values()
+            if c["status"] == "offered" or c["seller"] == actor or c["buyer"] == actor]),
         "recipes": {name: {"input": data[0], "input_qty": data[1],
                             "output": data[2], "output_qty": data[3]}
                     for name, data in RECIPES.items()},

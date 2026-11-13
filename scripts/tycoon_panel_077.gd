@@ -7,6 +7,11 @@ var panel: Control
 var picker: OptionButton
 var tabs: TabContainer
 var labels: Array[Label] = []
+var pages: Array[VBoxContainer] = []
+var contract_picker: OptionButton
+var offer_good: OptionButton
+var offer_quantity: SpinBox
+var offer_price: SpinBox
 var staff_count: SpinBox
 var wage_amount: SpinBox
 var production_target: SpinBox
@@ -37,42 +42,57 @@ func _ready() -> void:
     tabs = TabContainer.new()
     tabs.custom_minimum_size.y = 320
     body.add_child(tabs)
-    for tab in ["Обзор", "Производство", "Персонал", "Продажи", "Логистика", "Финансы"]:
+    for tab in ["Обзор", "Производство", "Персонал", "Продажи", "Логистика", "Финансы", "Контракты"]:
+        var scroll := ScrollContainer.new()
+        scroll.name = tab
+        tabs.add_child(scroll)
         var page := VBoxContainer.new()
-        page.name = tab
-        tabs.add_child(page)
+        page.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+        scroll.add_child(page)
+        pages.append(page)
         var label := Label.new()
         label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
         page.add_child(label)
         labels.append(label)
-    production_target = _spin(tabs.get_child(1), "Партии за тик (0–4)", 0, 4, 1)
-    _action(tabs.get_child(1), "Установить план", _set_production)
+    production_target = _spin(pages[1], "Партии за тик (0–4)", 0, 4, 1)
+    _action(pages[1], "Установить план", _set_production)
     recipe_picker = OptionButton.new()
-    for key in ["bread", "flour", "bakery"]:
+    for key in ["bread", "flour", "bakery", "steel", "parts", "car"]:
         recipe_picker.add_item(key)
-    tabs.get_child(1).add_child(recipe_picker)
-    _action(tabs.get_child(1), "Сменить рецепт", _set_recipe)
-    _action(tabs.get_child(1), "Модернизировать оборудование", _upgrade_equipment)
-    raw_qty = _spin(tabs.get_child(1), "Закупить зерно (1–100 ед.)", 1, 100, 1)
-    _action(tabs.get_child(1), "Закупить зерно у поставщика", _buy_grain)
-    staff_count = _spin(tabs.get_child(2), "Работники", 0, 20, 1)
-    wage_amount = _spin(tabs.get_child(2), "Оплата за производственную единицу, коп.", 500, 3000, 50)
-    _action(tabs.get_child(2), "Сохранить персонал", _set_staff)
+    pages[1].add_child(recipe_picker)
+    _action(pages[1], "Сменить рецепт", _set_recipe)
+    _action(pages[1], "Модернизировать оборудование", _upgrade_equipment)
+    raw_qty = _spin(pages[1], "Закупить зерно (1–100 ед.)", 1, 100, 1)
+    _action(pages[1], "Закупить зерно у поставщика", _buy_grain)
+    staff_count = _spin(pages[2], "Работники", 0, 20, 1)
+    wage_amount = _spin(pages[2], "Оплата за производственную единицу, коп.", 500, 3000, 50)
+    _action(pages[2], "Сохранить персонал", _set_staff)
     goods_picker = OptionButton.new()
-    for good in ["bread", "milk", "flour"]:
+    for good in ["bread", "milk", "flour", "car"]:
         goods_picker.add_item(good)
-    tabs.get_child(3).add_child(goods_picker)
+    pages[3].add_child(goods_picker)
     goods_picker.item_selected.connect(func(_i: int) -> void: _refresh_price())
-    bread_price = _spin(tabs.get_child(3), "Цена хлеба, коп.", 10850, 23250, 50)
-    _action(tabs.get_child(3), "Изменить цену", _set_price)
+    bread_price = _spin(pages[3], "Цена хлеба, коп.", 10850, 23250, 50)
+    _action(pages[3], "Изменить цену", _set_price)
     destination = OptionButton.new()
-    tabs.get_child(4).add_child(destination)
+    pages[4].add_child(destination)
     freight_goods = OptionButton.new()
-    for good in ["bread", "milk", "flour", "grain"]:
+    for good in ["bread", "milk", "flour", "grain", "ore", "steel", "parts", "car"]:
         freight_goods.add_item(good)
-    tabs.get_child(4).add_child(freight_goods)
-    freight_qty = _spin(tabs.get_child(4), "Количество единиц (1–50)", 1, 50, 1)
-    _action(tabs.get_child(4), "Отправить хлеб", _send_shipment)
+    pages[4].add_child(freight_goods)
+    _action(pages[4], "Расширить склад (+100 мест)", _expand_storage)
+    freight_qty = _spin(pages[4], "Количество единиц (1–50)", 1, 50, 1)
+    _action(pages[4], "Отправить хлеб", _send_shipment)
+    offer_good = OptionButton.new()
+    for good in ["ore", "steel", "parts", "car", "grain", "flour", "bread"]:
+        offer_good.add_item(good)
+    pages[6].add_child(offer_good)
+    offer_quantity = _spin(pages[6], "Количество по контракту (1–50)", 1, 50, 1)
+    offer_price = _spin(pages[6], "Цена за единицу, коп.", 1, 10000000, 100)
+    _action(pages[6], "Опубликовать предложение", _offer_contract)
+    contract_picker = OptionButton.new()
+    pages[6].add_child(contract_picker)
+    _action(pages[6], "Принять контракт на выбранный склад", _accept_contract)
     status = Label.new()
     status.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
     body.add_child(status)
@@ -148,7 +168,7 @@ func refresh() -> void:
     wage_amount.value = int(f.get("wage_minor", 750))
     labels[3].text = "Рыночная цена зависит от спроса и конкурентов.\nТекущие цены: %s" % str(f.get("prices", {}))
     _refresh_price()
-    labels[4].text = "Доставка платная. Срок и стоимость рассчитывает сервер."
+    labels[4].text = "Доставка платная. Срок и стоимость рассчитывает сервер.\nСкладские остатки: %s" % str(stock)
     var old_dst := ""
     if destination.item_count > 0 and destination.selected >= 0:
         old_dst = str(destination.get_item_metadata(destination.selected))
@@ -161,6 +181,14 @@ func refresh() -> void:
                 destination.select(destination.item_count - 1)
     if destination.item_count > 0 and destination.selected < 0:
         destination.select(0)
+    var contracts: Array = snapshot.get("contracts", [])
+    labels[6].text = "Предложения других компаний и ваши контракты:"
+    contract_picker.clear()
+    for contract in contracts:
+        labels[6].text += "\n%s %s: %d × %d коп. [%s]" % [str(contract.get("id", "")), str(contract.get("good", "")), int(contract.get("quantity", 0)), int(contract.get("price_minor", 0)), str(contract.get("status", ""))]
+        if contract.get("status") == "offered" and str(contract.get("seller", "")) != str(snapshot.get("company", "")):
+            contract_picker.add_item(str(contract.get("id", "")) + " " + str(contract.get("good", "")))
+            contract_picker.set_item_metadata(contract_picker.item_count - 1, str(contract.get("id", "")))
     labels[5].text = "Выручка: %d коп.\nСебестоимость: %d коп.\nРасходы: %d коп.\nЛогистика: %d коп.\nПрибыль: %d коп." % [int(metrics.get("revenue", 0)), int(metrics.get("cogs", 0)), int(metrics.get("operating_expense", 0)), int(metrics.get("freight", 0)), int(metrics.get("profit", 0))]
     var history: Array = snapshot.get("finance_history", [])
     for entry in history.slice(maxi(0, history.size() - 5)):
@@ -191,7 +219,7 @@ func _refresh_price() -> void:
     if goods_picker.selected < 0 or bread_price == null or picker.selected < 0:
         return
     var good := goods_picker.get_item_text(goods_picker.selected)
-    var base: int = {"bread": 15500, "milk": 18000, "flour": 10000}.get(good, 15500)
+    var base: int = {"bread": 15500, "milk": 18000, "flour": 10000, "car": 250000}.get(good, 15500)
     bread_price.min_value = int(base * 7 / 10)
     bread_price.max_value = int(base * 3 / 2)
     var facility: Dictionary = mmo.client.snapshot.get("facilities", {}).get(_facility_id(), {})
@@ -204,3 +232,18 @@ func _send_shipment() -> void:
     if destination.selected < 0:
         return
     _send("shipment.create", {"destination_id": str(destination.get_item_metadata(destination.selected)), "good": freight_goods.get_item_text(freight_goods.selected), "quantity": int(freight_qty.value)})
+func _offer_contract() -> void:
+    if offer_good.selected < 0:
+        return
+    _send("contract.offer", {"good": offer_good.get_item_text(offer_good.selected),
+        "quantity": int(offer_quantity.value), "price_minor": int(offer_price.value)})
+
+func _accept_contract() -> void:
+    if not mmo.online_active() or contract_picker.selected < 0 or _facility_id() == "":
+        return
+    mmo.client.send_command("contract.accept", {
+        "contract_id": str(contract_picker.get_item_metadata(contract_picker.selected)),
+        "destination_id": _facility_id()})
+
+func _expand_storage() -> void:
+    _send("facility.expand_storage", {})
