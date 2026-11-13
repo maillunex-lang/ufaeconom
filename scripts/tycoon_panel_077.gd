@@ -284,7 +284,7 @@ func refresh() -> void:
             var shares: Dictionary = info.get("share_bps", {})
             for company in shares:
                 labels[8].text += "\n  %s: %.1f%%" % [str(company), float(shares[company]) / 100.0]
-    labels[8].text += "\n\nРАЙОННЫЙ СПРОС (оценка, не гарантированные продажи)"
+    labels[8].text += "\n\nРАЙОННЫЙ РЫНОК (локация влияет на продажи)"
     for district in snapshot.get("district_demand", []):
         if int(district.get("own", 0)) > 0:
             labels[8].text += "\n%s / %s: магазинов %d, заводов %d, спрос хлеба ~%d/тик" % [
