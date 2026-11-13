@@ -54,11 +54,17 @@ var visual_detail := 1
 var android_hud: CanvasLayer
 var tycoon_panel: CanvasLayer
 var performance: Node
+var target_zoom := 0.8
+var camera_debug: Label
+const CAMERA_MIN_ZOOM := 0.52
+const CAMERA_MAX_ZOOM := 2.0
+const CAMERA_ZOOM_RESPONSE := 13.0
 
 func _ready() -> void:
 	camera = Camera2D.new()
 	camera.position = Vector2(0, 650)
 	camera.zoom = Vector2(0.8, 0.8)
+	target_zoom = 0.8
 	add_child(camera)
 	camera.make_current()
 	var traffic := CityLife25D.new()
@@ -84,6 +90,18 @@ func _ready() -> void:
 	performance = AndroidPerformance076.new()
 	performance.name = "AndroidPerformance076"
 	add_child(performance)
+	var debug_layer := CanvasLayer.new()
+	debug_layer.name = "CameraDiagnostics"
+	add_child(debug_layer)
+	camera_debug = Label.new()
+	camera_debug.name = "FPSLabel"
+	camera_debug.position = Vector2(12, 12)
+	camera_debug.add_theme_color_override("font_color", Color("#ffffff"))
+	camera_debug.add_theme_color_override("font_shadow_color", Color("#20382c"))
+	camera_debug.add_theme_constant_override("shadow_offset_x", 1)
+	camera_debug.add_theme_constant_override("shadow_offset_y", 1)
+	debug_layer.add_child(camera_debug)
+	set_process(true)
 	if int(catchup["advanced"]) > 0:
 		message_label.text = "Пока вас не было, прошло %d игровых дней" % int(catchup["advanced"])
 	day_timer = Timer.new()
@@ -105,6 +123,7 @@ func _load_city(index: int) -> void:
 	message_label.text = ""
 	_update_actions()
 	camera.position = Vector2(0, 700)
+	_clamp_camera()
 	queue_redraw()
 
 func _build_ui() -> void:
@@ -189,7 +208,17 @@ func _iso(tile: Vector2) -> Vector2:
 	return Vector2((tile.x - tile.y) * TILE_W * 0.5, (tile.x + tile.y) * TILE_H * 0.5)
 
 func _draw() -> void:
+	# Fill the visible world outside unlocked city chunks with natural terrain.
+	# The backing is one polygon, not thousands of off-map tiles.
+	var viewport_size := get_viewport_rect().size
+	var inverse := get_canvas_transform().affine_inverse()
+	var a: Vector2 = inverse * Vector2.ZERO
+	var b: Vector2 = inverse * Vector2(viewport_size.x, 0)
+	var c: Vector2 = inverse * viewport_size
+	var d: Vector2 = inverse * Vector2(0, viewport_size.y)
+	draw_colored_polygon(PackedVector2Array([a, b, c, d]), Color("#729b79"))
 	var visible := _visible_tile_rect()
+	var far_lod := camera.zoom.x < 0.72
 	var plots := _city_plots()
 	var opened: Dictionary = {}
 	for id in _active_chunks():
@@ -212,23 +241,34 @@ func _draw() -> void:
 				pos + Vector2(-TILE_W * 0.5, 0)
 			])
 			draw_colored_polygon(diamond, base)
-			CityDetail075.draw_ground(self, pos, tile, kind, camera.zoom.x)
-			draw_polyline(PackedVector2Array([diamond[0], diamond[1], diamond[2], diamond[3], diamond[0]]), Color("#527b61"), 0.8)
+			if not far_lod:
+				CityDetail075.draw_ground(self, pos, tile, kind, camera.zoom.x)
+			if not far_lod:
+				draw_polyline(PackedVector2Array([diamond[0], diamond[1], diamond[2], diamond[3], diamond[0]]), Color("#527b61"), 0.8)
 			if road:
-				_draw_road(pos, x, y)
+				if not far_lod:
+					_draw_road(pos, x, y)
 			elif kind == "Дерево":
-				_draw_tree(pos)
+				if not far_lod:
+					_draw_tree(pos)
 			elif COLORS.has(kind):
-				CityDetail075.draw_building_shadow(self, pos, tile, camera.zoom.x)
-				_draw_building(pos, kind, tile)
-			if kind == "Свободный участок" and Land.has_ore(city_index, tile):
+				if not far_lod:
+					CityDetail075.draw_building_shadow(self, pos, tile, camera.zoom.x)
+					_draw_building(pos, kind, tile)
+				else:
+					draw_rect(Rect2(pos + Vector2(-11, -17), Vector2(22, 22)), COLORS[kind])
+			if not far_lod and kind == "Свободный участок" and Land.has_ore(city_index, tile):
 				draw_circle(pos, 5.0, Color("#c28147"))
 			if plots.has(Land.plot_key(tile)):
 				var built: String = _building_at(tile)
 				if built != "":
-					CityDetail075.draw_building_shadow(self, pos, tile, camera.zoom.x)
-					_draw_building(pos, built, tile)
-				draw_circle(pos + Vector2(0, 10), 4, Color("#ffd55b") if _owns_plot(tile) else Color("#eabf9a"))
+					if far_lod:
+						draw_rect(Rect2(pos + Vector2(-12, -20), Vector2(24, 24)), COLORS.get(built, Color("#9db7b5")))
+					else:
+						CityDetail075.draw_building_shadow(self, pos, tile, camera.zoom.x)
+						_draw_building(pos, built, tile)
+				if not far_lod:
+					draw_circle(pos + Vector2(0, 10), 4, Color("#ffd55b") if _owns_plot(tile) else Color("#eabf9a"))
 			if selected == tile and construction_preview != "" and _owns_plot(tile) and _building_at(tile) == "":
 				BuildingArt.draw(self, pos, "НИИ" if construction_preview == "Исследовательский центр" else construction_preview, 1, true, CityDetail075.district(tile))
 			if selected == tile:
@@ -266,17 +306,18 @@ func _unhandled_input(event: InputEvent) -> void:
 		moved_since_press = true
 		if touches.size() == 1:
 			camera.position -= event.relative / camera.zoom
+			_clamp_camera()
 		elif touches.size() == 2:
 			var values := touches.values()
 			var distance: float = (values[0] as Vector2).distance_to(values[1] as Vector2)
 			if previous_pinch_distance > 0.0:
-				_set_zoom(camera.zoom.x * distance / previous_pinch_distance)
+				_set_zoom(target_zoom * distance / previous_pinch_distance)
 			previous_pinch_distance = distance
 	elif event is InputEventMouseButton:
 		if event.button_index == MOUSE_BUTTON_WHEEL_UP and event.pressed:
-			_set_zoom(camera.zoom.x * 1.12)
+			_set_zoom(target_zoom * 1.12)
 		elif event.button_index == MOUSE_BUTTON_WHEEL_DOWN and event.pressed:
-			_set_zoom(camera.zoom.x / 1.12)
+			_set_zoom(target_zoom / 1.12)
 		elif event.button_index == MOUSE_BUTTON_LEFT:
 			dragging = event.pressed
 			last_mouse = event.position
@@ -288,13 +329,64 @@ func _unhandled_input(event: InputEvent) -> void:
 		if event.position.distance_to(last_mouse) > 2.0:
 			moved_since_press = true
 		camera.position -= (event.position - last_mouse) / camera.zoom
+		_clamp_camera()
 		last_mouse = event.position
 	queue_redraw()
 
 func _set_zoom(value: float) -> void:
-	var z := clampf(value, 0.35, 2.0)
-	camera.zoom = Vector2(z, z)
-	queue_redraw()
+	target_zoom = clampf(value, CAMERA_MIN_ZOOM, CAMERA_MAX_ZOOM)
+
+
+func _city_world_bounds() -> Rect2:
+	var min_x := 0
+	var min_y := 0
+	var max_x := MAP_SIZE
+	var max_y := MAP_SIZE
+	for chunk in _active_chunks():
+		var coords := str(chunk).split(":")
+		if coords.size() != 2:
+			continue
+		min_x = mini(min_x, int(coords[0]) * Land.CHUNK)
+		min_y = mini(min_y, int(coords[1]) * Land.CHUNK)
+		max_x = maxi(max_x, (int(coords[0]) + 1) * Land.CHUNK)
+		max_y = maxi(max_y, (int(coords[1]) + 1) * Land.CHUNK)
+	var points := [_iso(Vector2(min_x, min_y)), _iso(Vector2(min_x, max_y)),
+		_iso(Vector2(max_x, min_y)), _iso(Vector2(max_x, max_y))]
+	var low: Vector2 = points[0]
+	var high: Vector2 = points[0]
+	for point in points:
+		low = low.min(point)
+		high = high.max(point)
+	return Rect2(low, high - low)
+
+
+func _clamp_camera() -> void:
+	if camera == null:
+		return
+	var bounds := _city_world_bounds().grow(250.0)
+	var view := get_viewport_rect().size / maxf(camera.zoom.x, CAMERA_MIN_ZOOM)
+	# Always keep the central city visible; expanded chunks enlarge the bounds.
+	var lower := bounds.position - view * 0.32
+	var upper := bounds.end + view * 0.32
+	camera.position = camera.position.clamp(lower, upper)
+
+
+func _process(delta: float) -> void:
+	if camera == null:
+		return
+	var blend := 1.0 - exp(-CAMERA_ZOOM_RESPONSE * maxf(delta, 0.0))
+	var previous := camera.zoom.x
+	var next := lerpf(previous, target_zoom, blend)
+	if absf(next - target_zoom) < 0.001:
+		next = target_zoom
+	if absf(previous - next) > 0.0001:
+		camera.zoom = Vector2(next, next)
+		_clamp_camera()
+		queue_redraw()
+	if camera_debug != null:
+		camera_debug.text = "FPS %d  |  %.1f ms  |  x%.2f  |  LOD %s" % [
+			Engine.get_frames_per_second(), 1000.0 / maxf(Engine.get_frames_per_second(), 1),
+			camera.zoom.x, "дальний" if camera.zoom.x < 0.72 else "обычный"]
 
 func _select_at(screen_position: Vector2) -> void:
 	var world: Vector2 = get_canvas_transform().affine_inverse() * screen_position
