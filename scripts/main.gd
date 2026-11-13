@@ -1,5 +1,6 @@
 extends Node2D
 ## Offline calendar prototype: 24 real hours = 30 game days, catch-up on load.
+const SafeArea = preload("res://scripts/mobile_safe_area.gd")
 const CityGenerator = preload("res://scripts/city_generator.gd")
 const CompanyState = preload("res://scripts/company_state.gd")
 const Calendar = preload("res://scripts/game_calendar.gd")
@@ -72,20 +73,23 @@ func _load_city(index: int) -> void:
 func _build_ui() -> void:
 	var layer := CanvasLayer.new()
 	add_child(layer)
-	var panel := PanelContainer.new()
-	panel.position = Vector2(16, 16)
-	panel.custom_minimum_size = Vector2(360, 170)
-	layer.add_child(panel)
-	var content := VBoxContainer.new()
-	panel.add_child(content)
+	var safe = SafeArea.new()
+	safe.name = "MobileSafeArea"
+	layer.add_child(safe)
+	var content: VBoxContainer = safe.add_panel("CompanyPanel", 390.0, 480.0, false)
+	safe.call_deferred("refresh")
 	var title := Label.new()
+	title.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	title.text = "BUSINESS EMPIRE ONLINE • 0.7 BETA"
 	content.add_child(title)
 	city_label = Label.new()
+	city_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	content.add_child(city_label)
 	money_label = Label.new()
+	money_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	content.add_child(money_label)
 	info = Label.new()
+	info.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	content.add_child(info)
 	message_label = Label.new()
 	message_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -93,18 +97,16 @@ func _build_ui() -> void:
 	actions = VBoxContainer.new()
 	content.add_child(actions)
 	var button := Button.new()
+	button.custom_minimum_size.y = 48.0
 	button.text = "Следующий город"
 	button.pressed.connect(func() -> void: _load_city(city_index + 1))
 	content.add_child(button)
 	var help := Label.new()
+	help.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	help.text = "Карта: перетаскивание • Масштаб: щипок / колесо"
 	content.add_child(help)
-	var market_panel := PanelContainer.new()
-	market_panel.position = Vector2(810, 16)
-	market_panel.custom_minimum_size = Vector2(455, 250)
-	layer.add_child(market_panel)
-	var market_content := VBoxContainer.new()
-	market_panel.add_child(market_content)
+	var market_content: VBoxContainer = safe.add_panel("EconomyPanel", 455.0, 420.0, true)
+	safe.call_deferred("refresh")
 	var market_title := Label.new()
 	market_title.text = "ЭКОНОМИКА • ЛОКАЛЬНАЯ ДЕМОНСТРАЦИЯ"
 	market_content.add_child(market_title)
@@ -112,6 +114,7 @@ func _build_ui() -> void:
 	economy_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	market_content.add_child(economy_label)
 	var ship_button := Button.new()
+	ship_button.custom_minimum_size.y = 48.0
 	ship_button.text = "🚚 Отправить 10 хлеба в следующий город"
 	ship_button.pressed.connect(_send_bread)
 	market_content.add_child(ship_button)
@@ -261,6 +264,7 @@ func _update_actions() -> void:
 
 func _add_action(title: String, callback: Callable) -> void:
 	var button := Button.new()
+	button.custom_minimum_size.y = 48.0
 	button.text = title
 	button.pressed.connect(callback)
 	actions.add_child(button)
