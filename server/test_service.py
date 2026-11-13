@@ -204,10 +204,13 @@ class HTTPTests(unittest.TestCase):
         cmd = {"command_id": "thirdco-0001", "expected_revision": snap["revision"],
                "type": "facility.set_price", "facility_id": "thirdco-shop-starter",
                "good": "bread", "price_minor": 14000}
-        self.assertEqual(self.call("/v1/command", cmd, token)[0], 200)
+        code, response = self.call("/v1/command", cmd, token)
+        self.assertEqual(code, 200)
         self.assertEqual(self.call("/v1/ledger", token=token)[0], 200)
         self.assertEqual(self.call("/v1/command", {
-            **cmd, "command_id": "thirdco-0002", "facility_id": "player-shop"}, token)[0], 400)
+            **cmd, "command_id": "thirdco-0002",
+            "expected_revision": response["revision"],
+            "facility_id": "player-shop"}, token)[0], 400)
         self.assertTrue(economy.audit_world(self.store.world))
 
     def test_parallel_readers_and_rejected_trust(self) -> None:
