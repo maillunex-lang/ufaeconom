@@ -14,6 +14,8 @@ const AndroidHUD074 = preload("res://scripts/android_hud_074.gd")
 const TycoonPanel077 = preload("res://scripts/tycoon_panel_077.gd")
 const SmartCity076 = preload("res://scripts/smart_city_076.gd")
 const AndroidPerformance076 = preload("res://scripts/android_performance_076.gd")
+const CityChunkCanvas = preload("res://scripts/city_chunk_canvas_0870.gd")
+const CityBackground = preload("res://scripts/city_background_0870.gd")
 const TILE_W := 96.0
 const TILE_H := 48.0
 const MAP_SIZE := 32
@@ -44,6 +46,51 @@ const TERRAIN_CACHE_LIMIT := 8192
 var terrain_cache: Dictionary = {}
 var terrain_cache_hits := 0
 var terrain_cache_misses := 0
+
+# Visible static terrain is drawn into persistent per-chunk canvas items.
+# Dynamic plots, selection and MMO overlays remain in main._draw().
+var static_chunk_nodes: Dictionary = {}
+var chunk_sync_elapsed := 0.0
+var chunk_sync_requested := true
+
+func _clear_chunk_canvases() -> void:
+	for node in static_chunk_nodes.values():
+		node.queue_free()
+	static_chunk_nodes.clear()
+	chunk_sync_requested = true
+
+func _sync_chunk_canvases() -> void:
+	if camera == null:
+		return
+	var visible := _visible_tile_rect()
+	var budget := CityDetail075.detail_budget(camera.zoom.x, performance.level if performance != null else 1)
+	if performance != null and performance.level == 0:
+		budget = 0
+	var opened: Dictionary = {}
+	for key in _active_chunks():
+		opened[str(key)] = true
+	var wanted: Dictionary = {}
+	var from_chunk := Vector2i(visible.position.x / Land.CHUNK, visible.position.y / Land.CHUNK)
+	var end_chunk := Vector2i((visible.end.x + Land.CHUNK - 1) / Land.CHUNK, (visible.end.y + Land.CHUNK - 1) / Land.CHUNK)
+	for cy in range(from_chunk.y, end_chunk.y):
+		for cx in range(from_chunk.x, end_chunk.x):
+			var key := "%d:%d" % [cx, cy]
+			if not opened.has(key):
+				continue
+			wanted[key] = true
+			if not static_chunk_nodes.has(key):
+				var node = CityChunkCanvas.new()
+				node.name = "Terrain_%d_%d" % [cx, cy]
+				add_child(node)
+				node.configure(self, Vector2i(cx, cy), budget, camera.zoom.x)
+				static_chunk_nodes[key] = node
+			else:
+				static_chunk_nodes[key].set_detail(budget, camera.zoom.x)
+	for key in static_chunk_nodes.keys():
+		if not wanted.has(key):
+			static_chunk_nodes[key].queue_free()
+			static_chunk_nodes.erase(key)
+
 
 func _static_tile_data(tile: Vector2i) -> Dictionary:
 	if terrain_cache.has(tile):
@@ -121,6 +168,9 @@ func _ready() -> void:
 	target_zoom = 0.8
 	add_child(camera)
 	camera.make_current()
+	var background = CityBackground.new()
+	background.name = "CityBackground"
+	add_child(background)
 	var traffic := CityLife25D.new()
 	traffic.name = "CityLife25D"
 	add_child(traffic)
@@ -167,6 +217,7 @@ func _ready() -> void:
 func _load_city(index: int) -> void:
 	city_index = posmod(index, CityGenerator.CITIES.size())
 	_clear_terrain_cache()
+	_clear_chunk_canvases()
 	var data: Dictionary = CityGenerator.make_city(city_index)
 	cells = data["cells"]
 	selected = Vector2i(-1, -1)
@@ -263,15 +314,8 @@ func _iso(tile: Vector2) -> Vector2:
 	return Vector2((tile.x - tile.y) * TILE_W * 0.5, (tile.x + tile.y) * TILE_H * 0.5)
 
 func _draw() -> void:
-	# Fill the visible world outside unlocked city chunks with natural terrain.
-	# The backing is one polygon, not thousands of off-map tiles.
-	var viewport_size := get_viewport_rect().size
-	var inverse := get_canvas_transform().affine_inverse()
-	var a: Vector2 = inverse * Vector2.ZERO
-	var b: Vector2 = inverse * Vector2(viewport_size.x, 0)
-	var c: Vector2 = inverse * viewport_size
-	var d: Vector2 = inverse * Vector2(0, viewport_size.y)
-	draw_colored_polygon(PackedVector2Array([a, b, c, d]), Color("#789a78"))
+    # Backing and static ground are separate cached canvas items.
+    # Only dynamic city objects are rebuilt in this draw.
 	var visible := _visible_tile_rect()
 	var detail_budget := CityDetail075.detail_budget(camera.zoom.x, performance.level if performance != null else 1)
 	var far_lod := detail_budget == 0
@@ -302,13 +346,7 @@ func _draw() -> void:
 			var pos: Vector2 = static_data["pos"]
 			var kind: String = static_data["kind"]
 			var road := kind == "Дорога"
-			var base: Color = static_data["tint"]
 			var diamond: PackedVector2Array = static_data["diamond"]
-			draw_colored_polygon(diamond, base)
-			if detail_budget > 0:
-				CityDetail075.draw_ground(self, pos, tile, kind, camera.zoom.x if detail_budget > 1 else 0.8)
-			if detail_budget > 1:
-				draw_polyline(PackedVector2Array([diamond[0], diamond[1], diamond[2], diamond[3], diamond[0]]), Color("#527b61"), 0.8)
 			if road:
 				if not far_lod:
 					_draw_road(pos, x, y)
@@ -514,6 +552,11 @@ func _clamp_camera() -> void:
 func _process(delta: float) -> void:
 	if camera == null:
 		return
+	chunk_sync_elapsed += delta
+	if chunk_sync_requested or chunk_sync_elapsed >= 0.18:
+		chunk_sync_elapsed = 0.0
+		chunk_sync_requested = false
+		_sync_chunk_canvases()
 	var blend := 1.0 - exp(-CAMERA_ZOOM_RESPONSE * maxf(delta, 0.0))
 	var previous := camera.zoom.x
 	var next := lerpf(previous, target_zoom, blend)
@@ -733,10 +776,12 @@ func _find_free_plot(ore_only: bool = false) -> void:
 	queue_redraw()
 
 func _on_world_snapshot(_data: Dictionary) -> void:
+	chunk_sync_requested = true
 	_update_actions()
 	queue_redraw()
 
 func _on_world_logout() -> void:
+	chunk_sync_requested = true
 	_update_actions()
 	queue_redraw()
 
