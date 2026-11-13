@@ -78,6 +78,24 @@ class Economy06Tests(unittest.TestCase):
                 self.issue(invalid[0], invalid[1], **invalid[2])
         self.assertTrue(econ.audit_world(self.w))
 
+    def test_distance_affects_equal_price_shops(self) -> None:
+        self.w["facilities"]["player-shop"]["prices"]["bread"] = 15000
+        self.w["facilities"]["npc-shop"]["prices"]["bread"] = 15000
+        self.w["facilities"]["player-shop"]["reputation"] = 70
+        self.w["facilities"]["npc-shop"]["reputation"] = 70
+        self.w["facilities"]["player-shop"]["customer_distance_km"] = 2
+        self.w["facilities"]["npc-shop"]["customer_distance_km"] = 25
+        econ.advance(self.w)
+        self.assertIn("player-shop:bread", self.w["last_sales"])
+        self.assertTrue(econ.audit_world(self.w))
+
+    def test_rejected_purchase_is_transactionally_clean(self) -> None:
+        before = econ.copy_world(self.w)
+        with self.assertRaises(econ.EconomyError):
+            self.issue("unfilled-0001", "facility.buy",
+                       facility_id="player-shop", good="grain", quantity=99)
+        self.assertEqual(self.w, before)
+
     def test_two_player_companies_have_separate_ownership(self) -> None:
         self.assertIn("company:rival", self.w["wallets"])
         self.assertTrue(self.w["facilities"]["rival-shop"]["owner"] == "rival")
@@ -123,6 +141,8 @@ class Economy06Tests(unittest.TestCase):
         self.assertEqual(self.w["wallets"], second["wallets"])
         self.assertGreater(self.w["stats"]["produced"], 0)
         self.assertGreater(self.w["stats"]["units_sold"], 0)
+        self.assertGreaterEqual(self.w["company_metrics"]["player"]["revenue"], 0)
+        self.assertGreaterEqual(self.w["company_metrics"]["npc"]["freight"], 0)
         self.assertGreaterEqual(self.w["stats"]["blocked"], 0)
 
 
