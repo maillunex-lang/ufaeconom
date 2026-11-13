@@ -58,7 +58,11 @@ class StoreTests(unittest.TestCase):
         self.assertGreater(len(self.store.ledger("player")), 0)
         backup = Path(self.tmp.name) / "backup.db"
         self.store.backup(backup)
-        self.assertEqual(sqlite3.connect(backup).execute("PRAGMA integrity_check").fetchone()[0], "ok")
+        backup_db = sqlite3.connect(backup)
+        try:
+            self.assertEqual(backup_db.execute("PRAGMA integrity_check").fetchone()[0], "ok")
+        finally:
+            backup_db.close()
         tick = self.store.world["tick"]
         balance = self.store.world["wallets"]["company:player"]
         self.store.close()
@@ -113,7 +117,10 @@ class HTTPTests(unittest.TestCase):
             with urlopen(req, timeout=5) as response:
                 return response.status, json.loads(response.read())
         except HTTPError as error:
-            return error.code, json.loads(error.read())
+            try:
+                return error.code, json.loads(error.read())
+            finally:
+                error.close()
 
     def test_two_clients_auth_ownership_reconnect_commands(self) -> None:
         self.assertEqual(self.call("/v1/health")[0], 200)
