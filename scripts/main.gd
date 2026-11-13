@@ -3,6 +3,7 @@ extends Node2D
 const SafeArea = preload("res://scripts/mobile_safe_area.gd")
 const Land = preload("res://scripts/city_land.gd")
 const CityGenerator = preload("res://scripts/city_generator.gd")
+const BuildingArt = preload("res://scripts/building_art.gd")
 const CompanyState = preload("res://scripts/company_state.gd")
 const Calendar = preload("res://scripts/game_calendar.gd")
 const MMOPanel = preload("res://scripts/mmo_panel.gd")
@@ -191,33 +192,8 @@ func _draw_tree(pos: Vector2) -> void:
 	draw_circle(pos + Vector2(-6, -34), 9, Color("#58a46a"))
 
 func _draw_building(pos: Vector2, kind: String) -> void:
-	var height := 30.0
-	if kind == "Завод" or kind == "Офис":
-		height = 48.0
-	var color: Color = COLORS[kind]
-	var left := pos + Vector2(-24, -8)
-	var right := pos + Vector2(24, -8)
-	var front := pos + Vector2(0, 5)
-	var top := Vector2(0, -height)
-	draw_colored_polygon(PackedVector2Array([left, front, front + top, left + top]), color.darkened(0.25))
-	draw_colored_polygon(PackedVector2Array([front, right, right + top, front + top]), color.darkened(0.08))
-	draw_colored_polygon(PackedVector2Array([left + top, front + top, right + top, pos + Vector2(0, -height - 21)]), color.lightened(0.25))
-	draw_rect(Rect2(pos + Vector2(-13, -height + 4), Vector2(7, 10)), Color("#d6ecf0"))
-	draw_rect(Rect2(pos + Vector2(8, -height + 4), Vector2(7, 10)), Color("#d6ecf0"))
-	if kind == "Завод":
-		draw_rect(Rect2(pos + Vector2(-17, -height - 29), Vector2(8, 22)), Color("#aab0b4"))
-		draw_rect(Rect2(pos + Vector2(-17, -height - 29), Vector2(8, 4)), Color("#d58d65"))
-
-	if kind == "Шахта":
-		draw_line(pos + Vector2(-16, -45), pos + Vector2(0, -80), Color("#765a3c"), 5)
-		draw_line(pos + Vector2(16, -45), pos + Vector2(0, -80), Color("#765a3c"), 5)
-		draw_circle(pos + Vector2(0, -65), 9, Color("#413c38"))
-	elif kind == "Исследовательский центр":
-		draw_circle(pos + Vector2(0, -height - 18), 14, Color("#c3d8f0"))
-		draw_line(pos + Vector2(0, -height - 25), pos + Vector2(9, -height - 40), Color.WHITE, 2)
-	elif kind == "Автосалон":
-		draw_rect(Rect2(pos + Vector2(-15, -height + 3), Vector2(31, 16)), Color("#a5e6f0"))
-		draw_rect(Rect2(pos + Vector2(-10, 1), Vector2(20, 7)), Color("#d94d49"))
+	# Cosmetic-only 2.5D building art; authoritative ownership stays unchanged.
+	BuildingArt.draw(self, pos, "НИИ" if kind == "Исследовательский центр" else kind)
 
 func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventScreenTouch:
