@@ -11,7 +11,6 @@ var smoothed_fps := 60.0
 var low_samples := 0
 var high_samples := 0
 var change_cooldown := 0.0
-var thermal_limited := false
 
 func _ready() -> void:
     game = get_parent()
@@ -31,7 +30,6 @@ func _process(delta: float) -> void:
     if not auto_enabled:
         return
     # Sustained FPS proxy only: no reliable cross-device thermal API here.
-    thermal_limited = false
     low_samples = low_samples + 1 if smoothed_fps < 27.0 else 0
     high_samples = high_samples + 1 if smoothed_fps > 53.0 else 0
     var next_level := GraphicsPolicy.decide(level, smoothed_fps, low_samples, high_samples, change_cooldown)

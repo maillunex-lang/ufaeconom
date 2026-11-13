@@ -582,8 +582,9 @@ func _process(delta: float) -> void:
 		fps_ui_elapsed = 0.0
 		fps_ui_frames = 0
 		city_profiler.sample(Engine.get_frames_per_second(), static_chunk_nodes.size(), _active_chunks().size(), _city_plots().size(), get_node("CityLife25D").get_child_count())
-		camera_debug.text = "FPS %d | %.1f ms | x%.2f | LOD %s | кварталы %d | здания %d" % [
-			Engine.get_frames_per_second(), 1000.0 / maxf(Engine.get_frames_per_second(), 1),
+		var rolling: Dictionary = city_profiler.summary()
+		camera_debug.text = "FPS %d (ср. %.0f) | %.1f ms | x%.2f | LOD %s | кварталы %d | здания %d" % [
+			Engine.get_frames_per_second(), float(rolling.get("avg_fps", 0.0)), 1000.0 / maxf(Engine.get_frames_per_second(), 1),
 			camera.zoom.x, "дальний" if camera.zoom.x < 0.72 else "обычный", static_chunk_nodes.size(), visible_render_buildings]
 
 func _select_at(screen_position: Vector2) -> void:

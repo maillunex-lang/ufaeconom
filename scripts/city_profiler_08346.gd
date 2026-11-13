@@ -29,15 +29,22 @@ func summary() -> Dictionary:
     var total_frame := 0.0
     var total_draw := 0.0
     var min_fps := INF
+    var sum_fps := 0.0
+    var low_fps_samples := 0
     for entry in samples:
         total_frame += entry["frame_ms"]
         total_draw += entry["draw_ms"]
         min_fps = minf(min_fps, entry["fps"])
+        sum_fps += entry["fps"]
+        if entry["fps"] < 27.0:
+            low_fps_samples += 1
     return {
         "samples": samples.size(),
         "avg_frame_ms": total_frame / samples.size(),
         "avg_draw_ms": total_draw / samples.size(),
         "min_fps": min_fps,
+        "avg_fps": sum_fps / samples.size(),
+        "low_fps_ratio": float(low_fps_samples) / samples.size(),
         "max_draw_ms": float(max_draw_us) / 1000.0,
         "latest": samples.back().duplicate(true)
     }
