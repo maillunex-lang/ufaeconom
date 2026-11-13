@@ -42,7 +42,7 @@ func _ready() -> void:
     tabs = TabContainer.new()
     tabs.custom_minimum_size.y = 320
     body.add_child(tabs)
-    for tab in ["Обзор", "Производство", "Персонал", "Продажи", "Логистика", "Финансы", "Контракты", "Конкуренты"]:
+    for tab in ["Обзор", "Производство", "Персонал", "Продажи", "Логистика", "Финансы", "Контракты", "Конкуренты", "Аналитика рынка"]:
         var scroll := ScrollContainer.new()
         scroll.name = tab
         tabs.add_child(scroll)
@@ -189,11 +189,23 @@ func refresh() -> void:
         if contract.get("status") == "offered" and str(contract.get("seller", "")) != str(snapshot.get("company", "")):
             contract_picker.add_item(str(contract.get("id", "")) + " " + str(contract.get("good", "")))
             contract_picker.set_item_metadata(contract_picker.item_count - 1, str(contract.get("id", "")))
+    var market_data: Dictionary = snapshot.get("market_analytics", {})
+    labels[8].text = "Рынок: реальные продажи за %d игровых дней (макс. 30)." % int(snapshot.get("market_window_days", 0))
+    for city in ["ufa", "sterlitamak", "tuymazy", "beloretsk"]:
+        var city_data: Dictionary = market_data.get(city, {})
+        labels[8].text += "\n\n%s" % city
+        for good in ["bread", "milk", "flour"]:
+            var info: Dictionary = city_data.get(good, {})
+            labels[8].text += "\n%s: %d ед. | спрос %d/тик" % [
+                good, int(info.get("units_sold_30d", 0)), int(info.get("demand_per_tick", 0))]
+            var shares: Dictionary = info.get("share_bps", {})
+            for company in shares:
+                labels[8].text += "\n  %s: %.1f%%" % [str(company), float(shares[company]) / 100.0]
     var competitors: Array = snapshot.get("npc_competitors", [])
     labels[7].text = "NPC-компании работают на сервере.\nОбновление решений: 1 игровой день."
     for competitor in competitors:
         labels[7].text += "\n\n%s • %d предприятий\nКапитал: %d коп.\nДействие: %s" % [
-            str(competitor.get("owner", "")), int(competitor.get("facilities", 0)),
+            str(competitor.get("owner", "")) + " [" + str(competitor.get("strategy", "")) + "]", int(competitor.get("facilities", 0)),
             int(competitor.get("cash_minor", 0)), str(competitor.get("latest_action", ""))]
     var activity: Array = snapshot.get("npc_activity", [])
     if not activity.is_empty():
