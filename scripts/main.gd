@@ -357,15 +357,7 @@ func _draw() -> void:
 			var static_data := _static_tile_data(tile)
 			var pos: Vector2 = static_data["pos"]
 			var kind: String = static_data["kind"]
-			var road := kind == "Дорога"
-			var diamond: PackedVector2Array = static_data["diamond"]
-			if road:
-				if not far_lod:
-					_draw_road(pos, x, y)
-			elif kind == "Дерево":
-				if not far_lod:
-					_draw_tree(pos, tile, detail_budget)
-			elif COLORS.has(kind):
+			if COLORS.has(kind):
 				_draw_building_lod(pos, kind, tile, building_lod)
 			if not far_lod and bool(static_data["ore"]):
 				draw_circle(pos, 5.0, Color("#c28147"))
@@ -392,40 +384,6 @@ func _draw() -> void:
 				BuildingArt.draw_preview(self, pos, "НИИ" if construction_preview == "Исследовательский центр" else construction_preview, CityDetail075.district(tile), construction_preview_elapsed)
 			if selected == tile:
 				draw_polyline(static_data["outline"], Color("#ffe175"), 3.0)
-
-func _draw_road(pos: Vector2, x: int, y: int) -> void:
-	var main_road := x % CityGenerator.ROAD_STEP == 0 or y % CityGenerator.ROAD_STEP == 0
-	if not main_road:
-		return
-	if x % CityGenerator.ROAD_STEP == 0 and y % CityGenerator.ROAD_STEP != 0:
-		draw_line(pos + Vector2(-19, -9), pos + Vector2(19, 9), Color("#a3b0ae"), 2.0)
-		if y % 3 == 0:
-			draw_line(pos + Vector2(-6, -3), pos + Vector2(6, 3), Color("#d8cfac"), 1.4)
-	elif y % CityGenerator.ROAD_STEP == 0 and x % CityGenerator.ROAD_STEP != 0:
-		draw_line(pos + Vector2(19, -9), pos + Vector2(-19, 9), Color("#a3b0ae"), 2.0)
-		if x % 3 == 0:
-			draw_line(pos + Vector2(6, -3), pos + Vector2(-6, 3), Color("#d8cfac"), 1.4)
-	else:
-		for offset in [-8.0, 0.0, 8.0]:
-			draw_line(pos+Vector2(offset-7,-6),pos+Vector2(offset+7,0),Color("#b7c0bb"),2.0)
-
-
-func _draw_tree(pos: Vector2, tile: Vector2i, budget: int) -> void:
-	var variant := posmod(tile.x * 17 + tile.y * 29, 5)
-	var crown := 12.0 + float(variant)
-	draw_ellipse_shadow(pos, crown)
-	draw_line(pos, pos + Vector2(0, -23), Color("#695b48"), 4.0)
-	draw_circle(pos + Vector2(0, -27), crown, Color("#365f49"))
-	draw_circle(pos + Vector2(-5, -32), crown * 0.75, Color("#4e8261"))
-	if budget > 1:
-		draw_circle(pos + Vector2(4, -36), crown * 0.45, Color("#6c9a70"))
-
-
-func draw_ellipse_shadow(pos: Vector2, radius: float) -> void:
-	draw_colored_polygon(PackedVector2Array([
-		pos+Vector2(-radius,2),pos+Vector2(0,6),
-		pos+Vector2(radius+7,4),pos+Vector2(5,-1)
-	]), Color(0.12,0.24,0.18,0.22))
 
 func _draw_building_lod(pos: Vector2, kind: String, tile: Vector2i, lod: int) -> void:
 	var tint: Color = COLORS.get(kind, Color("#9db7b5"))
