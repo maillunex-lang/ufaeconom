@@ -70,7 +70,7 @@ func _ready() -> void:
 	cargo.pressed.connect(_send_cargo)
 	actions.add_child(cargo)
 
-func is_connected() -> bool:
+func online_active() -> bool:
 	return client != null and client.connected()
 
 func _login() -> void:
@@ -109,7 +109,7 @@ func _on_logout() -> void:
 	summary_label.text = ""
 
 func _reduce_price() -> void:
-	if not is_connected():
+	if not online_active():
 		_on_error("Сначала войдите на сервер")
 		return
 	var facilities: Dictionary = client.snapshot.get("facilities", {})
@@ -125,7 +125,7 @@ func _reduce_price() -> void:
 	_on_error("У компании нет магазина")
 
 func _send_cargo() -> void:
-	if not is_connected():
+	if not online_active():
 		_on_error("Сначала войдите на сервер")
 		return
 	var facilities: Dictionary = client.snapshot.get("facilities", {})
