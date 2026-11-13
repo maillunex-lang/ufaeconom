@@ -1435,40 +1435,42 @@ def competition_opportunities(w: dict, actor: str) -> list[dict]:
 
 
 def district_demand(w: dict, actor: str) -> list[dict]:
-    """Spatial market indicators; competition and proximity affect retail allocation."""
+    """Spatial indicators with one infrastructure scan per visible district."""
     land.ensure_world(w)
     result = []
+    facilities_by_city = {city: [] for city in CITIES}
+    for fac in w["facilities"].values():
+        if fac["city"] in facilities_by_city and isinstance(fac.get("plot"), dict):
+            facilities_by_city[fac["city"]].append(fac)
     for city in CITIES:
+        facilities = facilities_by_city[city]
         districts = {}
-        for fac in w["facilities"].values():
-            if fac["city"] != city or "plot" not in fac:
-                continue
+        shops = []
+        for fac in facilities:
             x, y = int(fac["plot"]["x"]), int(fac["plot"]["y"])
             key = f"{x // 16}:{y // 16}"
             data = districts.setdefault(key, {"shops": 0, "factories": 0, "own": 0})
             if fac["kind"] == "shop":
                 data["shops"] += 1
+                shops.append(fac)
             if fac["kind"] == "factory":
                 data["factories"] += 1
             if fac["owner"] == actor:
                 data["own"] += 1
+        allocations = _allocate_district_demand(
+            DEMAND[city]["bread"], _district_sales_weights(city, shops, w))
         for district, data in sorted(districts.items()):
+            coordinates = tuple(map(int, district.split(":")))
+            infra = _district_infrastructure(w, city, coordinates)
+            population = _district_population(city, coordinates, w)
+            urban = _district_urban_metrics(w, city, coordinates, infra)
             result.append({"city": city, "district": district, **data,
-                           "estimated_bread_demand_per_tick": _allocate_district_demand(
-                               DEMAND[city]["bread"],
-                               _district_sales_weights(city, [f for f in w["facilities"].values()
-                                                               if f["city"] == city and f["kind"] == "shop"], w)
-                           ).get(tuple(map(int, district.split(":"))), 0),
-                           "synthetic_population": _district_population(
-                               city, tuple(map(int, district.split(":"))), w),
-                           "infrastructure": _district_infrastructure(
-                               w, city, tuple(map(int, district.split(":")))),
-                           "urban_metrics": _district_urban_metrics(
-                               w, city, tuple(map(int, district.split(":")))),
-                           "residential_tier": min(5, _district_population(
-                               city, tuple(map(int, district.split(":"))), w) // 750),
-                           "population_trend": max(-8, min(8, (
-                               _district_infrastructure(w, city, tuple(map(int, district.split(":"))))["attractiveness"] - 50) // 8)),
+                           "estimated_bread_demand_per_tick": allocations.get(coordinates, 0),
+                           "synthetic_population": population,
+                           "infrastructure": infra,
+                           "urban_metrics": urban,
+                           "residential_tier": min(5, population // 750),
+                           "population_trend": max(-8, min(8, (infra["attractiveness"] - 50) // 8)),
                            "competition_level": "high" if data["shops"] >= 3 else
                                                 "medium" if data["shops"] >= 2 else "low"})
     return result
