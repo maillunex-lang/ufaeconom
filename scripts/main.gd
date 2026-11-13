@@ -5,6 +5,7 @@ const Land = preload("res://scripts/city_land.gd")
 const CityGenerator = preload("res://scripts/city_generator.gd")
 const BuildingArt = preload("res://scripts/building_art.gd")
 const CityLife25D = preload("res://scripts/city_life_25d.gd")
+const Atmosphere25D = preload("res://scripts/city_atmosphere_25d.gd")
 const CompanyState = preload("res://scripts/company_state.gd")
 const Calendar = preload("res://scripts/game_calendar.gd")
 const MMOPanel = preload("res://scripts/mmo_panel.gd")
@@ -41,6 +42,8 @@ var last_mouse := Vector2.ZERO
 var info: Label
 var city_label: Label
 var mmo_panel
+var atmosphere: Node2D
+var visual_quality := 1
 
 func _ready() -> void:
 	camera = Camera2D.new()
@@ -51,6 +54,9 @@ func _ready() -> void:
 	var traffic := CityLife25D.new()
 	traffic.name = "CityLife25D"
 	add_child(traffic)
+	atmosphere = Atmosphere25D.new()
+	atmosphere.name = "CityAtmosphere25D"
+	add_child(atmosphere)
 	_build_ui()
 	mmo_panel = MMOPanel.new()
 	add_child(mmo_panel)
@@ -122,6 +128,25 @@ func _build_ui() -> void:
 	find_ore.custom_minimum_size.y = 48.0
 	find_ore.pressed.connect(_find_free_plot.bind(true))
 	content.add_child(find_ore)
+	var visuals := HBoxContainer.new()
+	content.add_child(visuals)
+	var weather_button := Button.new()
+	weather_button.text = "Погода: ясно"
+	weather_button.custom_minimum_size.y = 48.0
+	weather_button.pressed.connect(func() -> void:
+		atmosphere.cycle_weather()
+		weather_button.text = ["Погода: ясно", "Погода: дождь", "Погода: снег"][atmosphere.weather]
+	)
+	visuals.add_child(weather_button)
+	var quality_button := Button.new()
+	quality_button.text = "Эффекты: средняя"
+	quality_button.custom_minimum_size.y = 48.0
+	quality_button.pressed.connect(func() -> void:
+		visual_quality = (visual_quality + 1) % 3
+		atmosphere.set_quality(visual_quality)
+		quality_button.text = ["Эффекты: низкая", "Эффекты: средняя", "Эффекты: высокая"][visual_quality]
+	)
+	visuals.add_child(quality_button)
 	var help := Label.new()
 	help.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	help.text = "Карта: перетаскивание • Масштаб: щипок / колесо"
