@@ -59,6 +59,9 @@ NPC_STRATEGIES = {"npc": "value", "npc_auto": "growth"}
 MARKET_WINDOW_DAYS = 30
 AUTOMATION_MAX_BUDGET = 5_000_000
 AUTOMATION_MAX_EVENTS = 100
+# Server-authoritative milestones: rewards are integer kopecks, once per actor.
+MISSION_REWARDS_MINOR = {"first_land": 100_000, "first_build": 250_000, "first_delivery": 150_000}
+
 
 
 class EconomyError(ValueError):
@@ -113,7 +116,7 @@ def new_world(epoch_unix: int = 1800000000) -> dict:
         "schema": 1, "epoch_unix": epoch_unix, "tick": 0, "revision": 0,
         "wallets": wallets, "suppliers": suppliers, "facilities": facilities,
         "shipments": [], "next_shipment": 1, "next_facility": 1,
-        "receipts": {}, "audit": audit, "pending_ledger": [], "finance_history": [],
+        "mission_claims": {}, "receipts": {}, "audit": audit, "pending_ledger": [], "finance_history": [],
         "contracts": {}, "next_contract": 1,
         "stats": {"sales": 0, "units_sold": 0, "delivered": 0,
                   "produced": 0, "blocked": 0, "days_closed": 0},
@@ -136,6 +139,7 @@ def new_world(epoch_unix: int = 1800000000) -> dict:
 
 def migrate_industry(w: dict) -> None:
     """In-memory additive migration of 0.7.7 saves; persisted on next atomic commit."""
+    w.setdefault("mission_claims", {})
     if "flour" not in w["audit"]:
         w["audit"]["flour"] = {"initial": 0, "sourced": 0,
                                  "converted_in": 0, "converted_out": 0, "consumed": 0}
@@ -976,7 +980,28 @@ def apply_command(w: dict, actor: str, command: dict) -> dict:
     if kind in ("automation.configure", "facility.set_price", "facility.buy", "shipment.create", "facility.set_staff", "facility.set_production", "facility.set_recipe", "facility.upgrade_equipment", "contract.offer", "facility.expand_storage"):
         if fac is None or fac["owner"] != actor:
             raise EconomyError("facility not owned")
-    if kind == "automation.configure":
+    if kind == "mission.claim":
+        mission = command.get("mission")
+        if not isinstance(mission, str) or mission not in MISSION_REWARDS_MINOR:
+            raise EconomyError("unknown mission")
+        claims = w.setdefault("mission_claims", {}).setdefault(actor, [])
+        if mission in claims:
+            raise EconomyError("mission already claimed")
+        owned_plots = [p for layout in w["land"].values() for p in layout["plots"].values()
+                       if p["owner"] == actor]
+        eligible = {
+            "first_land": bool(owned_plots),
+            "first_build": any(p.get("building") for p in owned_plots),
+            "first_delivery": any(s.get("owner") == actor and s.get("status") == "delivered"
+                                  for s in w["shipments"]),
+        }
+        if not eligible[mission]:
+            raise EconomyError("mission not completed")
+        reward = MISSION_REWARDS_MINOR[mission]
+        _money(w, "treasury:central", "company:" + actor, reward, "mission.reward", mission)
+        claims.append(mission)
+        result = {"ok": True, "mission": mission, "reward_minor": reward}
+    elif kind == "automation.configure":
         fields = ("enabled", "buy_inputs", "restock", "production", "pricing")
         if any(type(command.get(k)) is not bool for k in fields):
             raise EconomyError("invalid automation flags")
@@ -1170,6 +1195,22 @@ def apply_command(w: dict, actor: str, command: dict) -> dict:
     return result
 
 
+def mission_status(w: dict, actor: str) -> list[dict]:
+    land.ensure_world(w)
+    plots = [p for layout in w["land"].values() for p in layout["plots"].values()
+             if p["owner"] == actor]
+    eligible = {
+        "first_land": bool(plots),
+        "first_build": any(p.get("building") for p in plots),
+        "first_delivery": any(s.get("owner") == actor and s.get("status") == "delivered"
+                              for s in w["shipments"]),
+    }
+    claimed = w.get("mission_claims", {}).get(actor, [])
+    return [{"id": name, "completed": eligible[name], "claimed": name in claimed,
+             "reward_minor": reward}
+            for name, reward in MISSION_REWARDS_MINOR.items()]
+
+
 def snapshot(w: dict, actor: str) -> dict:
     if (not isinstance(actor, str) or actor in NPC_OWNERS or
             "company:" + actor not in w["wallets"]):
@@ -1196,6 +1237,7 @@ def snapshot(w: dict, actor: str) -> dict:
         "ticks_per_game_day": TICKS_PER_DAY,
         "server_epoch_unix": w["epoch_unix"],
         "company": actor, "cash_minor": w["wallets"]["company:" + actor],
+        "missions": mission_status(w, actor),
         "facilities": own,
         "land": public_land,
         "shipments": copy.deepcopy([s for s in w["shipments"] if s["owner"] == actor]),

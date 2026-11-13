@@ -55,6 +55,8 @@ var mission_text: Label
 var mission_hint: Label
 var mission_close: Button
 var mission_go: Button
+var mission_claim: Button
+var mission_claim_id := ""
 const UI_MIN_TOUCH := 48.0
 
 func _ready() -> void:
@@ -146,6 +148,12 @@ func _ready() -> void:
     _style_button(mission_go, true)
     mission_go.pressed.connect(_go_to_mission)
     mission_box.add_child(mission_go)
+    mission_claim = Button.new()
+    mission_claim.text = "Получить награду MMO"
+    mission_claim.custom_minimum_size = Vector2(160, 48)
+    mission_claim.pressed.connect(_claim_server_mission)
+    mission_box.add_child(mission_claim)
+    mission_claim.visible = false
     mission_hint = _label(mission_box, "Учебный прогресс сохраняется на устройстве", 12)
     mission_panel.visible = false
     top_header = HBoxContainer.new()
@@ -428,7 +436,29 @@ func refresh_missions() -> void:
         return
     missions.refresh_from_game(game)
     mission_text.text = missions.progress_text()
+    mission_claim_id = ""
+    mission_claim.visible = false
+    if game.mmo_panel.online_active():
+        var server_missions: Array = game.mmo_panel.client.snapshot.get("missions", [])
+        mission_text.text += "\n\nСЕРВЕРНЫЕ ЗАДАНИЯ\n"
+        for mission in server_missions:
+            if mission is Dictionary:
+                var title: String = {"first_land": "Первая земля", "first_build": "Первое предприятие", "first_delivery": "Первая доставка"}.get(str(mission.get("id", "")), "Задание")
+                var status := "Получено" if mission.get("claimed", false) else "Можно забрать" if mission.get("completed", false) else "В процессе"
+                mission_text.text += "%s • %s • %d ₽\n" % [title, status, int(mission.get("reward_minor", 0)) / 100]
+                if mission_claim_id == "" and mission.get("completed", false) and not mission.get("claimed", false):
+                    mission_claim_id = str(mission.get("id", ""))
+        mission_claim.visible = mission_claim_id != ""
+    mission_claim.disabled = false
     mission_go.disabled = missions.next_step().is_empty()
+
+
+func _claim_server_mission() -> void:
+    if mission_claim_id == "" or not game.mmo_panel.online_active():
+        return
+    mission_claim.disabled = true
+    game.mmo_panel.client.send_command("mission.claim", {"mission": mission_claim_id})
+    # Server response/snapshot is authoritative. No optimistic wallet update.
 
 
 func _go_to_mission() -> void:
