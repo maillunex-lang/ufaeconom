@@ -177,7 +177,16 @@ func load_game() -> bool:
 				if amount < 0:
 					return false
 				inventory_cost[good] = amount
-			var wallets: Dictionary = {"stock": stock, "inventory_cost": inventory_cost}
+			var supplier_input: Variant = input_market.get("supplier_stock", {"Зерно": 0, "Молоко": 0})
+			if not (supplier_input is Dictionary):
+				return false
+			var supplier_stock: Dictionary = {}
+			for good in ["Зерно", "Молоко"]:
+				var remaining := int(supplier_input.get(good, -1))
+				if remaining < 0:
+					return false
+				supplier_stock[good] = remaining
+			var wallets: Dictionary = {"stock": stock, "inventory_cost": inventory_cost, "supplier_stock": supplier_stock}
 			for name in ["residents_cash", "supplier_cash", "city_budget"]:
 				var amount := int(input_market.get(name, -1))
 				if amount < 0:
