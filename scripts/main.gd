@@ -298,11 +298,13 @@ func _refresh_economy_ui() -> void:
 		"%s • День %d (авто: 15 секунд)\n" % [city_name, company.day] +
 		"Запасы: зерно %d • хлеб %d • молоко %d\n" % [int(stock["Зерно"]), int(stock["Хлеб"]), int(stock["Молоко"])] +
 		"Склад: %d / %d ед.\n" % [CompanyState.Economy.stock_total(city_market), company.storage_capacity(city_index)] +
-		"Спрос жителей: хлеб %d • молоко %d ед./день\n" % [int(daily.get("bread_demand", 0)), int(daily.get("milk_demand", 0))] +
+		"Спрос жителей: хлеб %d • молоко %d ед./день\n" % [int(daily.get("bread_demand", CompanyState.Economy.CITY_BREAD_DEMAND[city_index])), int(daily.get("milk_demand", CompanyState.Economy.CITY_MILK_DEMAND[city_index]))] +
 		"Продано: хлеб %d • молоко %d\n" % [int(daily.get("sold_bread", 0)), int(daily.get("sold_milk", 0))] +
 		"Выручка: %d ₽ | Расходы: %d ₽\n" % [int(daily.get("revenue", 0)), int(daily.get("expenses", 0))] +
-		"Денежный результат: %+d ₽\n" % realized +
+		"Прибыль (учёт себестоимости): %+d ₽\n" % realized +
+		"Денежный поток: %+d ₽\n" % flow +
 		"Бюджет покупателей: %d ₽\n" % int(city_market["residents_cash"]) +
+		"Поставщики: зерно %d • молоко %d\n" % [int(city_market["supplier_stock"]["Зерно"]), int(city_market["supplier_stock"]["Молоко"])] +
 		"Цены: хлеб 155 ₽, молоко 180 ₽\n" +
 		"Расчётный баланс, не реальные рыночные цены."
 	)
