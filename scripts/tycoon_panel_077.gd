@@ -183,6 +183,11 @@ func refresh() -> void:
     var stock: Dictionary = f.get("stock", {})
     var metrics: Dictionary = snapshot.get("company_metrics", {})
     labels[0].text = "%s • %s\nЗапасы: %s\nЁмкость: %d\nРепутация: %d" % [str(f.get("kind", "")), str(f.get("city", "")), str(stock), int(f.get("capacity", 0)), int(f.get("reputation", 0))]
+    var growth: Dictionary = snapshot.get("company_growth", {})
+    labels[0].text += "\n\nРАЗВИТИЕ КОМПАНИИ: %d/3 целей" % int(growth.get("completed_goals", 0))
+    for goal in growth.get("goals", []):
+        var goal_names := {"portfolio": "Портфель предприятий", "diversification": "Разнообразие отраслей", "regional": "Новые города"}
+        labels[0].text += "\n%s: %d/%d" % [str(goal_names.get(str(goal.get("id", "")), "")), int(goal.get("current", 0)), int(goal.get("target", 0))]
     var operations: Dictionary = snapshot.get("company_operations", {})
     for diagnostic in operations.get("factory_diagnostics", []):
         if str(diagnostic.get("id", "")) == id:
@@ -279,6 +284,13 @@ func refresh() -> void:
             var shares: Dictionary = info.get("share_bps", {})
             for company in shares:
                 labels[8].text += "\n  %s: %.1f%%" % [str(company), float(shares[company]) / 100.0]
+    labels[8].text += "\n\nРАЙОННЫЙ СПРОС (оценка, не гарантированные продажи)"
+    for district in snapshot.get("district_demand", []):
+        if int(district.get("own", 0)) > 0:
+            labels[8].text += "\n%s / %s: магазинов %d, заводов %d, спрос хлеба ~%d/тик" % [
+                str(district.get("city", "")), str(district.get("district", "")),
+                int(district.get("shops", 0)), int(district.get("factories", 0)),
+                int(district.get("estimated_bread_demand_per_tick", 0))]
     var competitors: Array = snapshot.get("npc_competitors", [])
     labels[7].text = "NPC-компании работают на сервере.\nОбновление решений: 1 игровой день."
     for competitor in competitors:

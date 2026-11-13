@@ -1269,6 +1269,48 @@ def competition_opportunities(w: dict, actor: str) -> list[dict]:
     return offers
 
 
+def district_demand(w: dict, actor: str) -> list[dict]:
+    """Spatial market indicators. Estimates only, not a change to simulation demand."""
+    land.ensure_world(w)
+    result = []
+    for city in CITIES:
+        districts = {}
+        for fac in w["facilities"].values():
+            if fac["city"] != city or "plot" not in fac:
+                continue
+            x, y = int(fac["plot"]["x"]), int(fac["plot"]["y"])
+            key = f"{x // 16}:{y // 16}"
+            data = districts.setdefault(key, {"shops": 0, "factories": 0, "own": 0})
+            if fac["kind"] == "shop":
+                data["shops"] += 1
+            if fac["kind"] == "factory":
+                data["factories"] += 1
+            if fac["owner"] == actor:
+                data["own"] += 1
+        for district, data in sorted(districts.items()):
+            result.append({"city": city, "district": district, **data,
+                           "estimated_bread_demand_per_tick": max(
+                               0, DEMAND[city]["bread"] // max(1, len(districts))),
+                           "competition_level": "high" if data["shops"] >= 3 else
+                                                "medium" if data["shops"] >= 2 else "low"})
+    return result
+
+
+def company_growth(w: dict, actor: str) -> dict:
+    """Read-only strategic company milestones, no currency rewards or client authority."""
+    owned = [f for f in w["facilities"].values() if f["owner"] == actor]
+    kinds = sorted({f["kind"] for f in owned})
+    cities = sorted({f["city"] for f in owned})
+    completed = sum((len(owned) >= 3, len(kinds) >= 2, len(cities) >= 2))
+    return {"facility_count": len(owned), "facility_kinds": kinds,
+            "operating_cities": cities, "completed_goals": completed,
+            "goals": [
+                {"id": "portfolio", "target": 3, "current": min(3, len(owned))},
+                {"id": "diversification", "target": 2, "current": min(2, len(kinds))},
+                {"id": "regional", "target": 2, "current": min(2, len(cities))},
+            ]}
+
+
 def snapshot(w: dict, actor: str) -> dict:
     if (not isinstance(actor, str) or actor in NPC_OWNERS or
             "company:" + actor not in w["wallets"]):
@@ -1304,6 +1346,8 @@ def snapshot(w: dict, actor: str) -> dict:
         "economic_intelligence": economic_intelligence(w, actor),
         "company_operations": company_operations(w, actor),
         "competition_opportunities": competition_opportunities(w, actor),
+        "district_demand": district_demand(w, actor),
+        "company_growth": company_growth(w, actor),
         "automation_rules": {fid: copy.deepcopy(rule) for fid, rule in
             w.get("automation_rules", {}).items() if fid in own},
         "automation_events": copy.deepcopy([ev for ev in
