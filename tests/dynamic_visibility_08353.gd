@@ -1,0 +1,17 @@
+extends SceneTree
+const Policy = preload("res://scripts/dynamic_visibility_08353.gd")
+const Life = preload("res://scripts/city_life_25d.gd")
+func _initialize() -> void:
+    assert(not Policy.should_animate(0.6, 2, true))
+    assert(not Policy.should_animate(1.0, 0, true))
+    assert(not Policy.should_animate(1.0, 2, false))
+    assert(Policy.should_animate(0.8, 1, true))
+    assert(Policy.actor_budget(0) == 0)
+    assert(Policy.actor_budget(1) == 32)
+    assert(Policy.actor_budget(2) == 48)
+    var life = Life.new()
+    assert(life.route_cache.is_empty())
+    assert(life.route_cache_limit <= 128)
+    life.free()
+    print("DYNAMIC_VISIBILITY_08353 PASS")
+    quit(0)

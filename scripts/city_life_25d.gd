@@ -2,19 +2,28 @@ extends Node2D
 ## Decorative 2.5D traffic only. No economy or server writes.
 const Land = preload("res://scripts/city_land.gd")
 const Smart = preload("res://scripts/smart_city_076.gd")
+const Visibility = preload("res://scripts/dynamic_visibility_08353.gd")
 const W := 96.0
 const H := 48.0
 var city: Node2D
 var clock := 0.0
 var redraw_clock := 0.0
 var detail_quality := 1
+var route_cache: Dictionary = {}
+var route_cache_city := -1
+var route_cache_chunks := ""
+var route_cache_limit := 96
+var last_drawn_vehicles := 0
+var last_drawn_people := 0
 
 func _ready() -> void:
     city = get_parent()
     z_index = 10
 
 func _process(delta: float) -> void:
-    if city == null or city.camera == null or city.camera.zoom.x < 0.72 or detail_quality == 0:
+    if city == null or city.camera == null:
+        return
+    if not Visibility.should_animate(city.camera.zoom.x, detail_quality, is_visible_in_tree()):
         return
     clock += delta
     redraw_clock += delta
@@ -28,19 +37,30 @@ func _iso(p: Vector2) -> Vector2:
 func _draw() -> void:
     if city.camera == null:
         return
-    if city.camera.zoom.x < 0.72 or detail_quality == 0:
+    if not Visibility.should_animate(city.camera.zoom.x, detail_quality, is_visible_in_tree()):
+        last_drawn_vehicles = 0
+        last_drawn_people = 0
         return
     var rect: Rect2i = city._visible_tile_rect()
+    if rect.size.x <= 0 or rect.size.y <= 0:
+        return
     var chunks: Array = city._active_chunks()
+    var chunk_signature := str(chunks)
+    if route_cache_city != city.city_index or route_cache_chunks != chunk_signature:
+        route_cache.clear()
+        route_cache_city = city.city_index
+        route_cache_chunks = chunk_signature
     var open: Dictionary = {}
     for key in chunks:
         open[key] = true
     var vehicle_count := 0
     var drawn_routes := 0
-    var max_vehicles := 12 if detail_quality == 0 else 32 if detail_quality == 1 else 48
-    var max_people := 10 if detail_quality == 0 else 32 if detail_quality == 1 else 48
+    var max_vehicles := Visibility.actor_budget(detail_quality)
+    var max_people := Visibility.actor_budget(detail_quality)
     var people_count := 0
-    # Only the visible road tiles are inspected; no nodes per road or actor.
+    # Only visible road tiles are inspected; route paths are cached by tile.
+    last_drawn_vehicles = 0
+    last_drawn_people = 0
     for y in range(rect.position.y,rect.end.y):
         for x in range(rect.position.x,rect.end.x):
             var tile := Vector2i(x,y)
@@ -67,7 +87,12 @@ func _draw() -> void:
                 # A short deterministic street route for visual delivery vans.
                 if detail_quality >= 1 and (x + y) % 9 == 0 and drawn_routes < 5:
                     var target := tile + Vector2i(0, 2) if road_x else tile + Vector2i(2, 0)
-                    var route := Smart.route(city.city_index, tile, target, open, 24)
+                    var route_key := "%d:%d:%d:%d" % [x, y, target.x, target.y]
+                    if not route_cache.has(route_key):
+                        if route_cache.size() >= route_cache_limit:
+                            route_cache.clear()
+                        route_cache[route_key] = Smart.route(city.city_index, tile, target, open, 24)
+                    var route: Array = route_cache[route_key]
                     if route.size() >= 2:
                         var at := fposmod(clock * 0.25 + float((x + y) % 7) * 0.13, float(route.size() - 1))
                         var idx := int(at)
@@ -83,3 +108,5 @@ func _draw() -> void:
                 draw_circle(p,2.4,Color("#ead4b4"))
                 draw_line(p+Vector2(0,2),p+Vector2(0,7),Color("#5b7792"),2.0)
                 people_count += 1
+    last_drawn_vehicles = vehicle_count
+    last_drawn_people = people_count
