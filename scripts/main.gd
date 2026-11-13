@@ -328,11 +328,13 @@ func _draw() -> void:
     # Only dynamic city objects are rebuilt in this draw.
 	var visible := _visible_tile_rect()
 	var detail_budget := CityDetail075.detail_budget(camera.zoom.x, performance.level if performance != null else 1)
+	var building_lod := CityDetail075.building_lod(camera.zoom.x, performance.level if performance != null else 1)
 	var far_lod := detail_budget == 0
 	# At emergency quality avoid per-tile decoration even at close zoom.
 	if performance != null and performance.level == 0:
 		far_lod = true
 		detail_budget = 0
+		building_lod = 0
 	var plots := _city_plots()
 	var invested_levels: Dictionary = {}
 	var residential_tiers: Dictionary = {}
@@ -364,11 +366,7 @@ func _draw() -> void:
 				if not far_lod:
 					_draw_tree(pos, tile, detail_budget)
 			elif COLORS.has(kind):
-				if not far_lod:
-					CityDetail075.draw_building_shadow(self, pos, tile, camera.zoom.x)
-					_draw_building(pos, kind, tile)
-				else:
-					draw_rect(Rect2(pos + Vector2(-11, -17), Vector2(22, 22)), COLORS[kind])
+				_draw_building_lod(pos, kind, tile, building_lod)
 			if not far_lod and bool(static_data["ore"]):
 				draw_circle(pos, 5.0, Color("#c28147"))
 			if not far_lod and not invested_levels.is_empty():
@@ -387,11 +385,7 @@ func _draw() -> void:
 			if plots.has(Land.plot_key(tile)):
 				var built: String = _building_at(tile)
 				if built != "":
-					if far_lod:
-						draw_rect(Rect2(pos + Vector2(-12, -20), Vector2(24, 24)), COLORS.get(built, Color("#9db7b5")))
-					else:
-						CityDetail075.draw_building_shadow(self, pos, tile, camera.zoom.x)
-						_draw_building(pos, built, tile)
+					_draw_building_lod(pos, built, tile, building_lod)
 				if not far_lod:
 					draw_circle(pos + Vector2(0, 10), 4, Color("#ffd55b") if _owns_plot(tile) else Color("#eabf9a"))
 			if selected == tile and construction_preview != "" and _owns_plot(tile) and _building_at(tile) == "":
@@ -432,6 +426,16 @@ func draw_ellipse_shadow(pos: Vector2, radius: float) -> void:
 		pos+Vector2(-radius,2),pos+Vector2(0,6),
 		pos+Vector2(radius+7,4),pos+Vector2(5,-1)
 	]), Color(0.12,0.24,0.18,0.22))
+
+func _draw_building_lod(pos: Vector2, kind: String, tile: Vector2i, lod: int) -> void:
+	var tint: Color = COLORS.get(kind, Color("#9db7b5"))
+	if lod == 0:
+		draw_rect(Rect2(pos + Vector2(-12, -20), Vector2(24, 24)), tint)
+	elif lod == 1:
+		CityDetail075.draw_building_silhouette(self, pos, kind, tint)
+	else:
+		CityDetail075.draw_building_shadow(self, pos, tile, camera.zoom.x)
+		_draw_building(pos, kind, tile)
 
 func _draw_building(pos: Vector2, kind: String, tile: Vector2i) -> void:
 	# Procedural visual level does not affect production, land ownership or server state.
