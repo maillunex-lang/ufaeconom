@@ -1,5 +1,5 @@
 extends Node2D
-## Offline prototype 0.4: deterministic isometric city and daily stock-flow economy.
+## Offline prototype 0.5: deterministic isometric city and daily stock-flow economy.
 const CityGenerator = preload("res://scripts/city_generator.gd")
 const CompanyState = preload("res://scripts/company_state.gd")
 const TILE_W := 96.0
@@ -71,7 +71,7 @@ func _build_ui() -> void:
 	var content := VBoxContainer.new()
 	panel.add_child(content)
 	var title := Label.new()
-	title.text = "BUSINESS EMPIRE ONLINE • 0.4"
+	title.text = "BUSINESS EMPIRE ONLINE • 0.5"
 	content.add_child(title)
 	city_label = Label.new()
 	content.add_child(city_label)
@@ -111,6 +111,10 @@ func _build_ui() -> void:
 	pause_button.text = "⏸ Приостановить время"
 	pause_button.pressed.connect(_toggle_timer)
 	market_content.add_child(pause_button)
+	var ship_button := Button.new()
+	ship_button.text = "🚚 Отправить 10 хлеба в следующий город"
+	ship_button.pressed.connect(_send_bread)
+	market_content.add_child(ship_button)
 
 func _iso(tile: Vector2) -> Vector2:
 	return Vector2((tile.x - tile.y) * TILE_W * 0.5, (tile.x + tile.y) * TILE_H * 0.5)
@@ -280,6 +284,11 @@ func _advance_day() -> void:
 	]
 	_update_actions()
 	queue_redraw()
+
+func _send_bread() -> void:
+	var target := (city_index + 1) % CityGenerator.CITIES.size()
+	message_label.text = company.send_goods(city_index, target, "Хлеб", 10)
+	_update_actions()
 
 func _toggle_timer() -> void:
 	day_timer.paused = not day_timer.paused

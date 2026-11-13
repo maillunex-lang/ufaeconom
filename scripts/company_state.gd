@@ -3,6 +3,7 @@ class_name CompanyState
 
 ## 0.4 offline company. All money is integer game rubles.
 const Economy = preload("res://scripts/economy_simulator.gd")
+const Dynamics = preload("res://scripts/market_dynamics.gd")
 const START_CASH := 2000000
 const LAND_PRICE := 120000
 const CONSTRUCTION := {"Магазин": 350000, "Склад": 280000, "Завод": 800000}
@@ -18,6 +19,7 @@ var owned: Dictionary = {}
 var city_index: int = 0
 var day: int = 0
 var markets: Dictionary = {}
+var shipments: Array = []
 var last_report: Dictionary = {}
 var totals: Dictionary = {"revenue": 0, "expenses": 0, "cashflow": 0, "profit": 0, "capital_expenditure": 0}
 
@@ -27,6 +29,7 @@ func reset() -> void:
 	city_index = 0
 	day = 0
 	markets.clear()
+	shipments.clear()
 	last_report.clear()
 	totals = {"revenue": 0, "expenses": 0, "cashflow": 0, "profit": 0, "capital_expenditure": 0}
 
@@ -93,6 +96,9 @@ func building_at(city: int, tile: Vector2i) -> String:
 func advance_day() -> Dictionary:
 	return Economy.step(self)
 
+func send_goods(origin: int, destination: int, good: String, amount: int) -> String:
+	return Dynamics.queue_shipment(self, origin, destination, good, amount)
+
 func save_game() -> bool:
 	var items: Array = []
 	for id in owned:
@@ -100,7 +106,7 @@ func save_game() -> bool:
 	var data := {
 		"version": 2, "cash": cash, "city_index": city_index,
 		"day": day, "properties": items, "markets": markets,
-		"totals": totals, "last_report": last_report
+		"totals": totals, "last_report": last_report, "shipments": shipments
 	}
 	var file := FileAccess.open(save_path, FileAccess.WRITE)
 	if file == null:
@@ -149,6 +155,7 @@ func load_game() -> bool:
 	var new_markets: Dictionary = {}
 	var new_totals: Dictionary = {"revenue": 0, "expenses": 0, "cashflow": 0, "profit": 0, "capital_expenditure": 0}
 	var new_report: Dictionary = {}
+	var new_shipments: Array = []
 	if version == 2:
 		var market_data: Variant = parsed.get("markets", {})
 		var total_data: Variant = parsed.get("totals", {})
@@ -186,7 +193,16 @@ func load_game() -> bool:
 				if remaining < 0:
 					return false
 				supplier_stock[good] = remaining
-			var wallets: Dictionary = {"stock": stock, "inventory_cost": inventory_cost, "supplier_stock": supplier_stock}
+			var price_input: Variant = input_market.get("prices", Dynamics.new_prices())
+			if not (price_input is Dictionary):
+				return false
+			var prices: Dictionary = {}
+			for good in Dynamics.BASE_PRICES:
+				var price := int(price_input.get(good, -1))
+				if price < 1 or price > 1000000:
+					return false
+				prices[good] = price
+			var wallets: Dictionary = {"stock": stock, "inventory_cost": inventory_cost, "supplier_stock": supplier_stock, "prices": prices}
 			for name in ["residents_cash", "supplier_cash", "city_budget"]:
 				var amount := int(input_market.get(name, -1))
 				if amount < 0:
@@ -195,16 +211,32 @@ func load_game() -> bool:
 			new_markets[id] = wallets
 		for name in new_totals:
 			var amount := int(total_data.get(name, 0))
-			if amount < 0 and name != "cashflow":
+			if amount < 0 and name not in ["cashflow", "profit"]:
 				return false
 			new_totals[name] = amount
 		new_report = report_data
+		var shipment_input: Variant = parsed.get("shipments", [])
+		if not (shipment_input is Array):
+			return false
+		for shipment in shipment_input:
+			if not (shipment is Dictionary):
+				return false
+			var origin := int(shipment.get("origin", -1))
+			var destination := int(shipment.get("destination", -1))
+			var good := str(shipment.get("good", ""))
+			var amount := int(shipment.get("amount", 0))
+			var cost := int(shipment.get("cost", -1))
+			var arrival := int(shipment.get("arrival_day", -1))
+			if origin < 0 or origin >= CITY_COUNT or destination < 0 or destination >= CITY_COUNT or origin == destination or not Dynamics.BASE_PRICES.has(good) or amount <= 0 or cost < 0 or arrival < 0:
+				return false
+			new_shipments.append({"origin": origin, "destination": destination, "good": good, "amount": amount, "cost": cost, "arrival_day": arrival})
 	# Commit only after the complete save has been validated.
 	cash = new_cash
 	city_index = new_city
 	day = new_day
 	owned = new_owned
 	markets = new_markets
+	shipments = new_shipments
 	totals = new_totals
 	last_report = new_report
 	return true
