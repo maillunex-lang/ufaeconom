@@ -67,6 +67,11 @@ var tycoon_panel: CanvasLayer
 var performance: Node
 var target_zoom := 0.8
 var camera_debug: Label
+var fps_ui_elapsed := 0.0
+var fps_ui_frames := 0
+var mouse_press_origin := Vector2.ZERO
+var mouse_last_position := Vector2.ZERO
+var mouse_drag_active := false
 const CAMERA_MIN_ZOOM := 0.52
 const CAMERA_MAX_ZOOM := 2.0
 const CAMERA_ZOOM_RESPONSE := 13.0
@@ -364,14 +369,18 @@ func _unhandled_input(event: InputEvent) -> void:
 			dragging = event.pressed
 			last_mouse = event.position
 			if event.pressed:
+				mouse_press_origin = event.position
+				mouse_drag_active = false
 				moved_since_press = false
-			elif not moved_since_press:
+			elif not mouse_drag_active:
 				_handle_tap(event.position)
 	elif event is InputEventMouseMotion and dragging:
-		if event.position.distance_to(last_mouse) > 2.0:
+		if not mouse_drag_active and event.position.distance_to(mouse_press_origin) >= TAP_DRAG_THRESHOLD:
+			mouse_drag_active = true
 			moved_since_press = true
-		camera.position -= (event.position - last_mouse) / camera.zoom
-		_clamp_camera()
+		if mouse_drag_active:
+			camera.position -= (event.position - last_mouse) / camera.zoom
+			_clamp_camera()
 		last_mouse = event.position
 	queue_redraw()
 
@@ -463,7 +472,11 @@ func _process(delta: float) -> void:
 	if construction_preview != "" and construction_preview_elapsed < 1.5:
 		construction_preview_elapsed += delta
 		queue_redraw()
-	if camera_debug != null:
+	fps_ui_elapsed += delta
+	fps_ui_frames += 1
+	if camera_debug != null and (fps_ui_elapsed >= 0.5 or fps_ui_frames >= 30):
+		fps_ui_elapsed = 0.0
+		fps_ui_frames = 0
 		camera_debug.text = "FPS %d  |  %.1f ms  |  x%.2f  |  LOD %s" % [
 			Engine.get_frames_per_second(), 1000.0 / maxf(Engine.get_frames_per_second(), 1),
 			camera.zoom.x, "дальний" if camera.zoom.x < 0.72 else "обычный"]
