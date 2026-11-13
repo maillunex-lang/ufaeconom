@@ -75,7 +75,7 @@ func _build_ui() -> void:
 	var content := VBoxContainer.new()
 	panel.add_child(content)
 	var title := Label.new()
-	title.text = "BUSINESS EMPIRE ONLINE • КАЛЕНДАРЬ 0.7"
+	title.text = "BUSINESS EMPIRE ONLINE • КАЛЕНДАРЬ 0.6"
 	content.add_child(title)
 	city_label = Label.new()
 	content.add_child(city_label)
