@@ -4,6 +4,7 @@ class_name CompanyState
 ## 0.4 offline company. All money is integer game rubles.
 const Economy = preload("res://scripts/economy_simulator.gd")
 const Dynamics = preload("res://scripts/market_dynamics.gd")
+const Calendar = preload("res://scripts/game_calendar.gd")
 const START_CASH := 2000000
 const LAND_PRICE := 120000
 const CONSTRUCTION := {"Магазин": 350000, "Склад": 280000, "Завод": 800000}
@@ -18,6 +19,7 @@ var cash: int = START_CASH
 var owned: Dictionary = {}
 var city_index: int = 0
 var day: int = 0
+var last_tick_unix: int = 0
 var markets: Dictionary = {}
 var shipments: Array = []
 var last_report: Dictionary = {}
@@ -28,6 +30,7 @@ func reset() -> void:
 	owned.clear()
 	city_index = 0
 	day = 0
+	last_tick_unix = 0
 	markets.clear()
 	shipments.clear()
 	last_report.clear()
@@ -96,6 +99,22 @@ func building_at(city: int, tile: Vector2i) -> String:
 func advance_day() -> Dictionary:
 	return Economy.step(self)
 
+func sync_calendar(now_unix: int) -> Dictionary:
+	# Catch-up is bounded per invocation. Leftover time stays in the anchor
+	# and can be replayed later without skipping production or shipments.
+	if now_unix <= 0:
+		return {"advanced": 0, "pending": 0, "date": Calendar.label(day)}
+	if last_tick_unix <= 0:
+		last_tick_unix = now_unix
+		save_game()
+		return {"advanced": 0, "pending": 0, "date": Calendar.label(day)}
+	var due: int = Calendar.due_days(last_tick_unix, now_unix)
+	for i in range(due):
+		advance_day()
+		last_tick_unix += Calendar.REAL_SECONDS_PER_GAME_DAY
+		save_game()
+	return {"advanced": due, "pending": Calendar.due_days(last_tick_unix, now_unix, 2147483647), "date": Calendar.label(day)}
+
 func send_goods(origin: int, destination: int, good: String, amount: int) -> String:
 	return Dynamics.queue_shipment(self, origin, destination, good, amount)
 
@@ -105,7 +124,7 @@ func save_game() -> bool:
 		items.append(owned[id])
 	var data := {
 		"version": 2, "cash": cash, "city_index": city_index,
-		"day": day, "properties": items, "markets": markets,
+		"day": day, "last_tick_unix": last_tick_unix, "properties": items, "markets": markets,
 		"totals": totals, "last_report": last_report, "shipments": shipments
 	}
 	var file := FileAccess.open(save_path, FileAccess.WRITE)
@@ -133,8 +152,9 @@ func load_game() -> bool:
 	var new_cash := int(parsed.get("cash", -1))
 	var new_city := int(parsed.get("city_index", -1))
 	var new_day := int(parsed.get("day", 0)) if version == 2 else 0
+	var new_last_tick := int(parsed.get("last_tick_unix", 0)) if version == 2 else 0
 	var properties: Variant = parsed.get("properties", [])
-	if new_cash < 0 or new_city < 0 or new_city >= CITY_COUNT or new_day < 0 or not (properties is Array):
+	if new_cash < 0 or new_city < 0 or new_city >= CITY_COUNT or new_day < 0 or new_last_tick < 0 or not (properties is Array):
 		return false
 	var new_owned: Dictionary = {}
 	for item in properties:
@@ -234,6 +254,7 @@ func load_game() -> bool:
 	cash = new_cash
 	city_index = new_city
 	day = new_day
+	last_tick_unix = new_last_tick
 	owned = new_owned
 	markets = new_markets
 	shipments = new_shipments
