@@ -1,0 +1,17 @@
+extends SceneTree
+const Profiler = preload("res://scripts/city_profiler_08346.gd")
+func _initialize() -> void:
+    var profiler = Profiler.new()
+    assert(profiler.summary().is_empty())
+    profiler.record_draw(2500)
+    profiler.sample(50.0, 4, 10, 25, 7)
+    var result = profiler.summary()
+    assert(result["samples"] == 1)
+    assert(is_equal_approx(result["avg_draw_ms"], 2.5))
+    assert(result["latest"]["visible_chunks"] == 4)
+    for i in range(125):
+        profiler.sample(60.0, 3, 8, 20, 5)
+    assert(profiler.summary()["samples"] == 120)
+    profiler.free()
+    print("CITY_PROFILER_08346 PASS")
+    quit(0)

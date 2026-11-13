@@ -16,6 +16,7 @@ const SmartCity076 = preload("res://scripts/smart_city_076.gd")
 const AndroidPerformance076 = preload("res://scripts/android_performance_076.gd")
 const CityChunkCanvas = preload("res://scripts/city_chunk_canvas_0870.gd")
 const CityBackground = preload("res://scripts/city_background_0870.gd")
+const CityProfiler = preload("res://scripts/city_profiler_08346.gd")
 const TILE_W := 96.0
 const TILE_H := 48.0
 const MAP_SIZE := 32
@@ -160,6 +161,7 @@ var visual_detail := 1
 var android_hud: CanvasLayer
 var tycoon_panel: CanvasLayer
 var performance: Node
+var city_profiler: Node
 var target_zoom := 0.8
 var camera_debug: Label
 var fps_ui_elapsed := 0.0
@@ -204,6 +206,9 @@ func _ready() -> void:
 	performance = AndroidPerformance076.new()
 	performance.name = "AndroidPerformance076"
 	add_child(performance)
+	city_profiler = CityProfiler.new()
+	city_profiler.name = "CityProfiler08346"
+	add_child(city_profiler)
 	var debug_layer := CanvasLayer.new()
 	debug_layer.name = "CameraDiagnostics"
 	add_child(debug_layer)
@@ -324,6 +329,7 @@ func _iso(tile: Vector2) -> Vector2:
 	return Vector2((tile.x - tile.y) * TILE_W * 0.5, (tile.x + tile.y) * TILE_H * 0.5)
 
 func _draw() -> void:
+	var draw_started_us := Time.get_ticks_usec()
     # Backing and static ground are separate cached canvas items.
     # Only dynamic city objects are rebuilt in this draw.
 	var visible := _visible_tile_rect()
@@ -384,6 +390,9 @@ func _draw() -> void:
 				BuildingArt.draw_preview(self, pos, "НИИ" if construction_preview == "Исследовательский центр" else construction_preview, CityDetail075.district(tile), construction_preview_elapsed)
 			if selected == tile:
 				draw_polyline(static_data["outline"], Color("#ffe175"), 3.0)
+
+	if city_profiler != null:
+		city_profiler.record_draw(Time.get_ticks_usec() - draw_started_us)
 
 func _draw_building_lod(pos: Vector2, kind: String, tile: Vector2i, lod: int) -> void:
 	var tint: Color = COLORS.get(kind, Color("#9db7b5"))
@@ -557,6 +566,7 @@ func _process(delta: float) -> void:
 	if camera_debug != null and (fps_ui_elapsed >= 0.5 or fps_ui_frames >= 30):
 		fps_ui_elapsed = 0.0
 		fps_ui_frames = 0
+		city_profiler.sample(Engine.get_frames_per_second(), static_chunk_nodes.size(), _active_chunks().size(), _city_plots().size(), get_node("CityLife25D").get_child_count())
 		camera_debug.text = "FPS %d  |  %.1f ms  |  x%.2f  |  LOD %s" % [
 			Engine.get_frames_per_second(), 1000.0 / maxf(Engine.get_frames_per_second(), 1),
 			camera.zoom.x, "дальний" if camera.zoom.x < 0.72 else "обычный"]
