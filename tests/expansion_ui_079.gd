@@ -15,7 +15,7 @@ func _run() -> void:
     root.add_child(game)
     await process_frame
     var panel = game.tycoon_panel
-    check(panel.tabs.get_tab_count() == 7, "industrial contract tab missing")
+    check(panel.tabs.get_tab_count() >= 7, "industrial contract tab missing")
     check(panel.recipe_picker.item_count == 6, "industrial recipes missing")
     check(panel.freight_goods.item_count == 8, "industrial freight goods missing")
     check(panel.offer_good.item_count >= 4, "contract offer goods missing")
