@@ -1,0 +1,59 @@
+extends Node2D
+## Decorative 2.5D traffic only. No economy or server writes.
+const Land = preload("res://scripts/city_land.gd")
+const W := 96.0
+const H := 48.0
+var city: Node2D
+var clock := 0.0
+var redraw_clock := 0.0
+
+func _ready() -> void:
+    city = get_parent()
+    z_index = 10
+
+func _process(delta: float) -> void:
+    clock += delta
+    redraw_clock += delta
+    if redraw_clock >= 0.12:
+        redraw_clock = 0.0
+        queue_redraw()
+
+func _iso(p: Vector2) -> Vector2:
+    return Vector2((p.x-p.y)*W*0.5,(p.x+p.y)*H*0.5)
+
+func _draw() -> void:
+    if city.camera == null:
+        return
+    var rect: Rect2i = city._visible_tile_rect()
+    var chunks: Array = city._active_chunks()
+    var open: Dictionary = {}
+    for key in chunks:
+        open[key] = true
+    var vehicle_count := 0
+    var people_count := 0
+    # Only the visible road tiles are inspected; no nodes per road or actor.
+    for y in range(rect.position.y,rect.end.y):
+        for x in range(rect.position.x,rect.end.x):
+            var tile := Vector2i(x,y)
+            if not open.has(Land.chunk_key(tile)):
+                continue
+            if Land.kind_at(city.city_index,tile) != "Дорога":
+                continue
+            var road_x := x % 7 == 0
+            var road_y := y % 7 == 0
+            if (x*13+y*19) % 11 == 0 and vehicle_count < 32:
+                var phase := fposmod(clock*(0.42+float((x+y)%3)*0.09)+float((x*7+y)%17)*0.31,1.0)
+                var next := Vector2(x+phase,y) if road_y else Vector2(x,y+phase)
+                var pos := _iso(next)
+                var direction := Vector2(W*0.5,H*0.5) if road_y else Vector2(-W*0.5,H*0.5)
+                var tint := Color("#dfb879") if (x+y)%3==0 else Color("#7cb7cb")
+                draw_colored_polygon(PackedVector2Array([pos+Vector2(0,-5),pos+Vector2(7,-2),pos+Vector2(7,2),pos+Vector2(0,0)]),tint)
+                draw_line(pos,pos+direction.normalized()*7.0,Color("#415668"),2.0)
+                vehicle_count += 1
+            if (x*17+y*23)%13 == 0 and people_count < 32:
+                var phase2 := fposmod(clock*0.19+float((x+y)%9)*0.21,1.0)
+                var p := _iso(Vector2(x+phase2,y) if road_y else Vector2(x,y+phase2))
+                p += Vector2(0,-8)
+                draw_circle(p,2.4,Color("#ead4b4"))
+                draw_line(p+Vector2(0,2),p+Vector2(0,7),Color("#5b7792"),2.0)
+                people_count += 1
