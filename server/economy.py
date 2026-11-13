@@ -519,6 +519,42 @@ def _district_retail_score(fac: dict, competitors: list[dict]) -> int:
     return center_distance * 9 + same_district * 120
 
 
+def _district_population(city: str, district: tuple[int, int]) -> int:
+    """Deterministic synthetic households, independent of player activity."""
+    x, y = district
+    return max(10, 1000 - 80 * (abs(x) + abs(y)))
+
+
+def _district_sales_weights(city: str, shops: list[dict]) -> dict[tuple[int, int], int]:
+    """Synthetic population weights; include neighboring residential districts."""
+    districts = {(0, 0), (1, 0), (0, 1), (1, 1)}
+    districts.update((int(f["plot"]["x"]) // 16, int(f["plot"]["y"]) // 16)
+                     for f in shops if isinstance(f.get("plot"), dict))
+    return {d: _district_population(city, d) for d in sorted(districts)}
+
+
+def _allocate_district_demand(total: int, weights: dict[tuple[int, int], int]) -> dict[tuple[int, int], int]:
+    """Largest-remainder allocation, exact integer sum and stable tie-breaking."""
+    denominator = sum(weights.values())
+    if denominator <= 0:
+        return {}
+    quotas = {key: divmod(total * weight, denominator) for key, weight in weights.items()}
+    allocations = {key: value[0] for key, value in quotas.items()}
+    remainder = total - sum(allocations.values())
+    ranked = sorted(quotas, key=lambda key: (-quotas[key][1], key))
+    for key in ranked[:remainder]:
+        allocations[key] += 1
+    return allocations
+
+
+def _district_shop_rank(fac: dict, district: tuple[int, int], good: str) -> tuple:
+    plot = fac.get("plot") or {"x": 0, "y": 0}
+    distance = abs(int(plot["x"]) // 16 - district[0]) + abs(int(plot["y"]) // 16 - district[1])
+    # Distance affects effective price; a cheaper shop can still win remotely.
+    effective_price = int(fac["prices"][good]) * (100 + distance * 8)
+    return (effective_price, int(fac["customer_distance_km"]), -int(fac["reputation"]), fac["id"])
+
+
 def _retail(w: dict) -> None:
     recent = {}
     for city in CITIES:
@@ -528,45 +564,43 @@ def _retail(w: dict) -> None:
                      and fac["stock"][good] > 0]
             if not shops:
                 continue
-            # District location and local competition now influence real
-            # retail allocation, while citywide demand remains conserved.
-            shops.sort(key=lambda f: (f["prices"][good] * 100 +
-                                      f["customer_distance_km"] * 12 -
-                                      f["reputation"] * 2,
-                                      _district_retail_score(f, shops), f["id"]))
-            # Price elasticity: expensive goods reduce *aggregate* demand.
-            best_price = shops[0]["prices"][good]
+            best_price = min(fac["prices"][good] for fac in shops)
             demand = min(DEMAND[city][good] * 2,
                          DEMAND[city][good] * BASE_PRICES[good] // best_price)
+            weights = _district_sales_weights(city, shops)
+            allocations = _allocate_district_demand(demand, weights)
             affordable = w["wallets"]["residents:" + city]
-            for fac in shops:
-                price = fac["prices"][good]
-                qty = min(demand, fac["stock"][good], affordable // price)
-                if qty <= 0:
-                    continue
-                cost = _take(fac, good, qty)
-                metrics = w["company_metrics"][fac["owner"]]
-                metrics["cogs"] += cost
-                metrics["profit"] -= cost
-                receipt = qty * price
-                _money(w, "residents:" + city, "company:" + fac["owner"],
-                       receipt, "retail.sale", fac["id"])
-                tax = receipt * SALES_TAX_BPS // 10000
-                _money(w, "company:" + fac["owner"], "treasury:" + city,
-                       tax, "retail.tax", fac["id"])
-                w["audit"][good]["consumed"] += qty
-                w["stats"]["sales"] += receipt
-                w["stats"]["units_sold"] += qty
-                market_key = city + ":" + good + ":" + fac["owner"]
-                w["market_today"][market_key] = w["market_today"].get(market_key, 0) + qty
-                recent[fac["id"] + ":" + good] = {"units": qty, "revenue": receipt,
-                                                  "cost_basis": cost}
-                affordable -= receipt
-                demand -= qty
-                if demand <= 0:
-                    break
+            for district, district_demand in allocations.items():
+                for fac in sorted(shops, key=lambda f: _district_shop_rank(f, district, good)):
+                    price = fac["prices"][good]
+                    qty = min(district_demand, fac["stock"][good], affordable // price)
+                    if qty <= 0:
+                        continue
+                    cost = _take(fac, good, qty)
+                    metrics = w["company_metrics"][fac["owner"]]
+                    metrics["cogs"] += cost
+                    metrics["profit"] -= cost
+                    receipt = qty * price
+                    _money(w, "residents:" + city, "company:" + fac["owner"],
+                           receipt, "retail.sale", fac["id"])
+                    tax = receipt * SALES_TAX_BPS // 10000
+                    _money(w, "company:" + fac["owner"], "treasury:" + city,
+                           tax, "retail.tax", fac["id"])
+                    w["audit"][good]["consumed"] += qty
+                    w["stats"]["sales"] += receipt
+                    w["stats"]["units_sold"] += qty
+                    market_key = city + ":" + good + ":" + fac["owner"]
+                    w["market_today"][market_key] = w["market_today"].get(market_key, 0) + qty
+                    sale_key = fac["id"] + ":" + good
+                    current = recent.setdefault(sale_key, {"units": 0, "revenue": 0, "cost_basis": 0})
+                    current["units"] += qty
+                    current["revenue"] += receipt
+                    current["cost_basis"] += cost
+                    affordable -= receipt
+                    district_demand -= qty
+                    if district_demand <= 0:
+                        break
     w["last_sales"] = recent
-
 
 def _close_month(w: dict) -> None:
     # One rent charge per facility, once every 360 production ticks.
@@ -1308,8 +1342,13 @@ def district_demand(w: dict, actor: str) -> list[dict]:
                 data["own"] += 1
         for district, data in sorted(districts.items()):
             result.append({"city": city, "district": district, **data,
-                           "estimated_bread_demand_per_tick": max(
-                               0, DEMAND[city]["bread"] // max(1, len(districts))),
+                           "estimated_bread_demand_per_tick": _allocate_district_demand(
+                               DEMAND[city]["bread"],
+                               _district_sales_weights(city, [f for f in w["facilities"].values()
+                                                               if f["city"] == city and f["kind"] == "shop"])
+                           ).get(tuple(map(int, district.split(":"))), 0),
+                           "synthetic_population": _district_population(
+                               city, tuple(map(int, district.split(":")))),
                            "competition_level": "high" if data["shops"] >= 3 else
                                                 "medium" if data["shops"] >= 2 else "low"})
     return result

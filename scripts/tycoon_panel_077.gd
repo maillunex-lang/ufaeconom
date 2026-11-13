@@ -287,8 +287,9 @@ func refresh() -> void:
     labels[8].text += "\n\nРАЙОННЫЙ РЫНОК (локация влияет на продажи)"
     for district in snapshot.get("district_demand", []):
         if int(district.get("own", 0)) > 0:
-            labels[8].text += "\n%s / %s: магазинов %d, заводов %d, спрос хлеба ~%d/тик" % [
+            labels[8].text += "\n%s / %s: жителей ~%d, магазинов %d, заводов %d, спрос хлеба ~%d/тик" % [
                 str(district.get("city", "")), str(district.get("district", "")),
+                int(district.get("synthetic_population", 0)),
                 int(district.get("shops", 0)), int(district.get("factories", 0)),
                 int(district.get("estimated_bread_demand_per_tick", 0))]
     var competitors: Array = snapshot.get("npc_competitors", [])
