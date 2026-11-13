@@ -1,7 +1,8 @@
 extends Node2D
-## Offline prototype 0.5: deterministic isometric city and daily stock-flow economy.
+## Offline calendar prototype: 24 real hours = 30 game days, catch-up on load.
 const CityGenerator = preload("res://scripts/city_generator.gd")
 const CompanyState = preload("res://scripts/company_state.gd")
+const Calendar = preload("res://scripts/game_calendar.gd")
 const TILE_W := 96.0
 const TILE_H := 48.0
 const MAP_SIZE := 32
@@ -40,10 +41,13 @@ func _ready() -> void:
 	camera.make_current()
 	_build_ui()
 	company.load_game()
+	var catchup: Dictionary = company.sync_calendar(int(Time.get_unix_time_from_system()))
 	_load_city(company.city_index)
+	if int(catchup["advanced"]) > 0:
+		message_label.text = "Пока вас не было, прошло %d игровых дней" % int(catchup["advanced"])
 	day_timer = Timer.new()
-	day_timer.wait_time = 15.0
-	day_timer.timeout.connect(_advance_day)
+	day_timer.wait_time = 30.0
+	day_timer.timeout.connect(_sync_calendar)
 	add_child(day_timer)
 	day_timer.start()
 
@@ -71,7 +75,7 @@ func _build_ui() -> void:
 	var content := VBoxContainer.new()
 	panel.add_child(content)
 	var title := Label.new()
-	title.text = "BUSINESS EMPIRE ONLINE • 0.5"
+	title.text = "BUSINESS EMPIRE ONLINE • КАЛЕНДАРЬ 0.7"
 	content.add_child(title)
 	city_label = Label.new()
 	content.add_child(city_label)
@@ -103,14 +107,6 @@ func _build_ui() -> void:
 	economy_label = Label.new()
 	economy_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	market_content.add_child(economy_label)
-	var day_button := Button.new()
-	day_button.text = "▶ Следующий игровой день"
-	day_button.pressed.connect(_advance_day)
-	market_content.add_child(day_button)
-	pause_button = Button.new()
-	pause_button.text = "⏸ Приостановить время"
-	pause_button.pressed.connect(_toggle_timer)
-	market_content.add_child(pause_button)
 	var ship_button := Button.new()
 	ship_button.text = "🚚 Отправить 10 хлеба в следующий город"
 	ship_button.pressed.connect(_send_bread)
@@ -276,6 +272,13 @@ func _construct(kind: String) -> void:
 	_update_actions()
 	queue_redraw()
 
+func _sync_calendar() -> void:
+	var report: Dictionary = company.sync_calendar(int(Time.get_unix_time_from_system()))
+	if int(report["advanced"]) > 0:
+		message_label.text = "Прошло %d игровых дней • дата %s" % [int(report["advanced"]), str(report["date"])]
+	_update_actions()
+	queue_redraw()
+
 func _advance_day() -> void:
 	var report: Dictionary = company.advance_day()
 	var cashflow: int = int(report.get("cashflow", 0))
@@ -291,8 +294,8 @@ func _send_bread() -> void:
 	_update_actions()
 
 func _toggle_timer() -> void:
+	# Only used by legacy offline tests. The live MMO calendar cannot be paused by clients.
 	day_timer.paused = not day_timer.paused
-	pause_button.text = "▶ Возобновить время" if day_timer.paused else "⏸ Приостановить время"
 
 func _refresh_economy_ui() -> void:
 	if economy_label == null:
@@ -304,7 +307,8 @@ func _refresh_economy_ui() -> void:
 	var flow: int = int(daily.get("revenue", 0)) - int(daily.get("expenses", 0))
 	var city_name: String = CityGenerator.CITIES[city_index]["name"]
 	economy_label.text = (
-		"%s • День %d (авто: 15 секунд)\n" % [city_name, company.day] +
+		"%s • %s | 1 месяц = 24 часа\n" % [city_name, Calendar.label(company.day)] +
+		"Следующий игровой день через %d мин.\n" % int(ceili(float(Calendar.remaining_seconds(company.last_tick_unix, int(Time.get_unix_time_from_system()))) / 60.0)) +
 		"Запасы: зерно %d • хлеб %d • молоко %d\n" % [int(stock["Зерно"]), int(stock["Хлеб"]), int(stock["Молоко"])] +
 		"Склад: %d / %d ед.\n" % [CompanyState.Economy.stock_total(city_market), company.storage_capacity(city_index)] +
 		"Спрос жителей: хлеб %d • молоко %d ед./день\n" % [int(daily.get("bread_demand", CompanyState.Economy.CITY_BREAD_DEMAND[city_index])), int(daily.get("milk_demand", CompanyState.Economy.CITY_MILK_DEMAND[city_index]))] +
@@ -314,6 +318,6 @@ func _refresh_economy_ui() -> void:
 		"Денежный поток: %+d ₽\n" % flow +
 		"Бюджет покупателей: %d ₽\n" % int(city_market["residents_cash"]) +
 		"Поставщики: зерно %d • молоко %d\n" % [int(city_market["supplier_stock"]["Зерно"]), int(city_market["supplier_stock"]["Молоко"])] +
-		"Цены: хлеб 155 ₽, молоко 180 ₽\n" +
+		"Цены: хлеб %d ₽, молоко %d ₽\n" % [CompanyState.Dynamics.price(city_market, "Хлеб"), CompanyState.Dynamics.price(city_market, "Молоко")] +
 		"Расчётный баланс, не реальные рыночные цены."
 	)
