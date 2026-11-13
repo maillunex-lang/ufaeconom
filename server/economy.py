@@ -529,6 +529,29 @@ def _district_population(city: str, district: tuple[int, int], w: dict | None = 
     return int(w.get("district_population", {}).get(city, {}).get(f"{x}:{y}", baseline))
 
 
+def _district_infrastructure(w: dict, city: str, district: tuple[int, int]) -> dict:
+    """Existing map roads, residential tiles and businesses form attractiveness."""
+    cx, cy = district
+    roads = housing = 0
+    # Sample 16x16 map chunk, no procedural map mutation.
+    for y in range(cy * 16, cy * 16 + 16):
+        for x in range(cx * 16, cx * 16 + 16):
+            tile = land.code_at(city, x, y)
+            roads += tile == 1
+            housing += tile == 2
+    local = [f for f in w["facilities"].values()
+             if f["city"] == city and isinstance(f.get("plot"), dict)
+             and int(f["plot"]["x"]) // 16 == cx and int(f["plot"]["y"]) // 16 == cy]
+    services = sum(f["kind"] in ("shop", "research_center") for f in local)
+    industry = sum(f["kind"] in ("factory", "mine") for f in local)
+    jobs = sum(int(f.get("workers", 0)) for f in local)
+    score = max(0, min(100, 30 + min(25, roads // 3)
+                       + min(20, housing * 2) + services * 7
+                       + min(20, jobs // 2) - industry * 8))
+    return {"roads": roads, "housing_tiles": housing, "services": services,
+            "industry": industry, "jobs": jobs, "attractiveness": score}
+
+
 def _update_district_population(w: dict) -> None:
     """Monthly bounded migration based on nearby jobs and local infrastructure."""
     populations = w.setdefault("district_population", {})
@@ -537,13 +560,9 @@ def _update_district_population(w: dict) -> None:
         weights = _district_sales_weights(city, shops, w)
         city_pop = populations.setdefault(city, {})
         for (x, y), previous in sorted(weights.items()):
-            local = [f for f in w["facilities"].values()
-                     if f["city"] == city and isinstance(f.get("plot"), dict)
-                     and int(f["plot"]["x"]) // 16 == x and int(f["plot"]["y"]) // 16 == y]
-            jobs = sum(int(f.get("workers", 0)) for f in local)
-            services = sum(f["kind"] in ("shop", "research_center") for f in local)
-            industry = sum(f["kind"] in ("factory", "mine") for f in local)
-            delta = max(-8, min(8, jobs // 3 + services * 2 - industry * 3 - 1))
+            infra = _district_infrastructure(w, city, (x, y))
+            # Infrastructure changes migration, never instant population.
+            delta = max(-8, min(8, (infra["attractiveness"] - 50) // 8))
             city_pop[f"{x}:{y}"] = max(10, min(5000, previous + delta))
 
 
@@ -1372,6 +1391,8 @@ def district_demand(w: dict, actor: str) -> list[dict]:
                            ).get(tuple(map(int, district.split(":"))), 0),
                            "synthetic_population": _district_population(
                                city, tuple(map(int, district.split(":"))), w),
+                           "infrastructure": _district_infrastructure(
+                               w, city, tuple(map(int, district.split(":")))),
                            "competition_level": "high" if data["shops"] >= 3 else
                                                 "medium" if data["shops"] >= 2 else "low"})
     return result

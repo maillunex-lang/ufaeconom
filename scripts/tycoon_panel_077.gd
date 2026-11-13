@@ -287,11 +287,15 @@ func refresh() -> void:
     labels[8].text += "\n\nРАЙОННЫЙ РЫНОК (локация влияет на продажи)"
     for district in snapshot.get("district_demand", []):
         if int(district.get("own", 0)) > 0:
+            var infra: Dictionary = district.get("infrastructure", {})
             labels[8].text += "\n%s / %s: жителей ~%d, магазинов %d, заводов %d, спрос хлеба ~%d/тик" % [
                 str(district.get("city", "")), str(district.get("district", "")),
                 int(district.get("synthetic_population", 0)),
                 int(district.get("shops", 0)), int(district.get("factories", 0)),
                 int(district.get("estimated_bread_demand_per_tick", 0))]
+            labels[8].text += "\n  Привлекательность %d/100 • дороги %d • жилые участки %d" % [
+                int(infra.get("attractiveness", 0)), int(infra.get("roads", 0)),
+                int(infra.get("housing_tiles", 0))]
     var competitors: Array = snapshot.get("npc_competitors", [])
     labels[7].text = "NPC-компании работают на сервере.\nОбновление решений: 1 игровой день."
     for competitor in competitors:
