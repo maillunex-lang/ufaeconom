@@ -1,0 +1,16 @@
+extends SceneTree
+const Main = preload("res://scripts/main.gd")
+func _initialize() -> void:
+    var game = Main.new()
+    assert(game.chunk_sync_requested)
+    game.last_chunk_visible = Rect2i(Vector2i(2, 3), Vector2i(16, 16))
+    game.last_chunk_camera_position = Vector2(12, 13)
+    game.static_chunk_nodes["0:0"] = Node2D.new()
+    game._clear_chunk_canvases()
+    assert(game.static_chunk_nodes.is_empty())
+    assert(game.chunk_sync_requested)
+    assert(game.last_chunk_visible == Rect2i())
+    assert(is_inf(game.last_chunk_camera_position.x))
+    game.free()
+    print("CHUNK_VISIBILITY_QA_0870 PASS")
+    quit(0)
