@@ -1211,6 +1211,64 @@ def mission_status(w: dict, actor: str) -> list[dict]:
             for name, reward in MISSION_REWARDS_MINOR.items()]
 
 
+def company_operations(w: dict, actor: str) -> dict:
+    """Read-only, deterministic operating guidance from authoritative state."""
+    own = [f for f in w["facilities"].values() if f["owner"] == actor]
+    factories = []
+    for f in sorted(own, key=lambda item: item["id"]):
+        if f["kind"] != "factory":
+            continue
+        recipe = RECIPES.get(f.get("recipe", "bread"), RECIPES["bread"])
+        input_good, input_units, output_good, output_units = recipe
+        workers = int(f.get("workers", 0))
+        target = int(f.get("production_target", 0))
+        equipment = int(f.get("equipment_level", 1))
+        needed_equipment = RECIPE_MIN_EQUIPMENT.get(f.get("recipe", "bread"), 1)
+        stock = int(f["stock"].get(input_good, 0))
+        batches = min(target, stock // input_units)
+        reasons = []
+        if workers <= 0:
+            reasons.append("no_staff")
+        if target <= 0:
+            reasons.append("paused")
+        if equipment < needed_equipment:
+            reasons.append("equipment")
+        if target > 0 and stock < target * input_units:
+            reasons.append("raw_shortage")
+        factories.append({
+            "id": f["id"], "city": f["city"], "recipe": f.get("recipe", "bread"),
+            "input_good": input_good, "output_good": output_good,
+            "planned_batches": target, "input_stock": stock,
+            "required_input": target * input_units,
+            "potential_output": batches * output_units if not reasons else 0,
+            "issues": reasons,
+        })
+    return {"factory_diagnostics": factories, "facility_count": len(own)}
+
+
+def competition_opportunities(w: dict, actor: str) -> list[dict]:
+    """Compare a company's shop prices with visible competitors, never mutate pricing."""
+    offers = []
+    for fac in sorted(w["facilities"].values(), key=lambda f: f["id"]):
+        if fac["owner"] != actor or fac["kind"] != "shop":
+            continue
+        for good in ("bread", "milk", "flour", "car"):
+            peers = [int(other["prices"][good]) for other in w["facilities"].values()
+                     if other["city"] == fac["city"] and other["kind"] == "shop"
+                     and other["owner"] != actor and good in other["prices"]
+                     and other["stock"].get(good, 0) > 0]
+            if not peers:
+                continue
+            own_price = int(fac["prices"][good])
+            competitor_min = min(peers)
+            offers.append({"facility_id": fac["id"], "good": good,
+                           "own_price_minor": own_price,
+                           "lowest_competitor_minor": competitor_min,
+                           "difference_minor": own_price - competitor_min,
+                           "competitor_count": len(peers)})
+    return offers
+
+
 def snapshot(w: dict, actor: str) -> dict:
     if (not isinstance(actor, str) or actor in NPC_OWNERS or
             "company:" + actor not in w["wallets"]):
@@ -1244,6 +1302,8 @@ def snapshot(w: dict, actor: str) -> dict:
         "market": market, "market_analytics": market_report(w),
         "market_window_days": len(w.get("market_daily", [])),
         "economic_intelligence": economic_intelligence(w, actor),
+        "company_operations": company_operations(w, actor),
+        "competition_opportunities": competition_opportunities(w, actor),
         "automation_rules": {fid: copy.deepcopy(rule) for fid, rule in
             w.get("automation_rules", {}).items() if fid in own},
         "automation_events": copy.deepcopy([ev for ev in

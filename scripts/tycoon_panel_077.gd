@@ -183,6 +183,14 @@ func refresh() -> void:
     var stock: Dictionary = f.get("stock", {})
     var metrics: Dictionary = snapshot.get("company_metrics", {})
     labels[0].text = "%s • %s\nЗапасы: %s\nЁмкость: %d\nРепутация: %d" % [str(f.get("kind", "")), str(f.get("city", "")), str(stock), int(f.get("capacity", 0)), int(f.get("reputation", 0))]
+    var operations: Dictionary = snapshot.get("company_operations", {})
+    for diagnostic in operations.get("factory_diagnostics", []):
+        if str(diagnostic.get("id", "")) == id:
+            labels[0].text += "\n\nПЛАН ПРОИЗВОДСТВА: %d партий, возможный выпуск %d ед." % [
+                int(diagnostic.get("planned_batches", 0)), int(diagnostic.get("potential_output", 0))]
+            var problems: Array = diagnostic.get("issues", [])
+            if not problems.is_empty():
+                labels[0].text += "\nПРОВЕРИТЬ: " + ", ".join(problems)
     labels[1].text = "Последний выпуск: %d ед.\nТик: %d\nРецепт: %s\nОборудование: уровень %d\nЗерно: %d | Мука: %d" % [int(f.get("production_last_units", 0)), int(f.get("production_last_tick", 0)), str(f.get("recipe", "bread")), int(f.get("equipment_level", 1)), int(stock.get("grain", 0)), int(stock.get("flour", 0))]
     for i in range(recipe_picker.item_count):
         if recipe_picker.get_item_text(i) == str(f.get("recipe", "bread")):
@@ -277,6 +285,12 @@ func refresh() -> void:
         labels[7].text += "\n\n%s • %d предприятий\nКапитал: %d коп.\nДействие: %s" % [
             str(competitor.get("owner", "")) + " [" + str(competitor.get("strategy", "")) + "]", int(competitor.get("facilities", 0)),
             int(competitor.get("cash_minor", 0)), str(competitor.get("latest_action", ""))]
+    labels[7].text += "\n\nЦЕНОВЫЕ СРАВНЕНИЯ (только аналитика)"
+    for offer in snapshot.get("competition_opportunities", []):
+        if str(offer.get("facility_id", "")) == id:
+            labels[7].text += "\n%s: наша %d коп. / минимум конкурентов %d коп. / разница %+d коп." % [
+                str(offer.get("good", "")), int(offer.get("own_price_minor", 0)),
+                int(offer.get("lowest_competitor_minor", 0)), int(offer.get("difference_minor", 0))]
     var activity: Array = snapshot.get("npc_activity", [])
     if not activity.is_empty():
         labels[7].text += "\n\nСОБЫТИЯ РЫНКА"
