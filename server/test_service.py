@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import concurrent.futures
 import json
+import subprocess
+import sys
 import sqlite3
 import tempfile
 import threading
@@ -74,6 +76,24 @@ class StoreTests(unittest.TestCase):
         self.store.logout(token)
         with self.assertRaises(Exception):
             self.store.authenticate(token)
+
+    def test_online_backup_during_active_writer(self) -> None:
+        # Different process uses SQLite's online backup API and does not
+        # need to stop the authoritative world worker.
+        destination = Path(self.tmp.name) / "online-backup.db"
+        run = subprocess.run(
+            [sys.executable, "-m", "server.service", "backup",
+             "--db", str(self.db_path), "--output", str(destination)],
+            capture_output=True, text=True, timeout=8)
+        self.assertEqual(run.returncode, 0, run.stderr)
+        backup_db = sqlite3.connect(destination)
+        try:
+            self.assertEqual(backup_db.execute("PRAGMA integrity_check").fetchone()[0],
+                             "ok")
+            self.assertEqual(backup_db.execute("SELECT count(*) FROM world_state").fetchone()[0],
+                             1)
+        finally:
+            backup_db.close()
 
     def test_dynamic_third_user_and_single_writer(self) -> None:
         self.store.create_user("third_user", "third-private-fixture-123", "thirdco",
