@@ -152,10 +152,12 @@ func _test_main_ui() -> void:
 		push_error("UI economy label not initialized")
 		quit(1)
 		return
+	ui_company.reset()
+	scene.call("_load_city", 0)
 	scene.call("_advance_day")
 	var timer: Timer = scene.get("day_timer")
 	if ui_company.day != 1 or not str(scene.get("economy_label").text).contains("День 1") or not str(scene.get("message_label").text).contains("прибыль"):
-		push_error("Economy UI day/profit update failed")
+		push_error("Economy UI day/profit update failed: day=%d; dashboard=%s; message=%s" % [ui_company.day, scene.get("economy_label").text, scene.get("message_label").text])
 		quit(1)
 		return
 	scene.call("_toggle_timer")
