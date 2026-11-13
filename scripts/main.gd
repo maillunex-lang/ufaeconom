@@ -17,6 +17,7 @@ const AndroidPerformance076 = preload("res://scripts/android_performance_076.gd"
 const CityChunkCanvas = preload("res://scripts/city_chunk_canvas_0870.gd")
 const CityBackground = preload("res://scripts/city_background_0870.gd")
 const CityProfiler = preload("res://scripts/city_profiler_08346.gd")
+const ChunkBudget = preload("res://scripts/chunk_budget_08356.gd")
 const TILE_W := 96.0
 const TILE_H := 48.0
 const MAP_SIZE := 32
@@ -54,6 +55,11 @@ var terrain_cache_misses := 0
 # Visible static terrain is drawn into persistent per-chunk canvas items.
 # Dynamic plots, selection and MMO overlays remain in main._draw().
 var static_chunk_nodes: Dictionary = {}
+const CHUNKS_PER_FRAME := 2
+var pending_chunk_coords: Array[Vector2i] = []
+var pending_chunk_budget := 0
+var pending_chunk_zoom := 0.8
+var chunk_build_count := 0
 # Cache only deterministic city layouts, never player-owned plots or economy state.
 const CITY_LAYOUT_CACHE_LIMIT := 2
 var city_layout_cache: Dictionary = {}
@@ -70,6 +76,7 @@ var last_chunk_quality := -1
 var last_chunk_visible := Rect2i()
 
 func _clear_chunk_canvases() -> void:
+	pending_chunk_coords.clear()
 	for node in static_chunk_nodes.values():
 		node.queue_free()
 	static_chunk_nodes.clear()
@@ -92,6 +99,7 @@ func _sync_chunk_canvases() -> void:
 	for key in _active_chunks():
 		opened[str(key)] = true
 	var wanted: Dictionary = {}
+	var missing: Array[Vector2i] = []
 	var from_chunk := Vector2i(visible.position.x / Land.CHUNK, visible.position.y / Land.CHUNK)
 	var end_chunk := Vector2i((visible.end.x + Land.CHUNK - 1) / Land.CHUNK, (visible.end.y + Land.CHUNK - 1) / Land.CHUNK)
 	for cy in range(from_chunk.y, end_chunk.y):
@@ -101,18 +109,33 @@ func _sync_chunk_canvases() -> void:
 				continue
 			wanted[key] = true
 			if not static_chunk_nodes.has(key):
-				var node = CityChunkCanvas.new()
-				node.name = "Terrain_%d_%d" % [cx, cy]
-				add_child(node)
-				node.configure(self, Vector2i(cx, cy), budget, camera.zoom.x)
-				static_chunk_nodes[key] = node
+				missing.append(Vector2i(cx, cy))
 			else:
 				static_chunk_nodes[key].set_detail(budget, camera.zoom.x)
 	for key in static_chunk_nodes.keys():
 		if not wanted.has(key):
 			static_chunk_nodes[key].queue_free()
 			static_chunk_nodes.erase(key)
+	# Replace outdated requests after camera movement or city switching.
+	pending_chunk_coords = ChunkBudget.nearest_first(missing, camera.position, TILE_W, TILE_H)
+	pending_chunk_budget = budget
+	pending_chunk_zoom = camera.zoom.x
 
+func _build_pending_chunks() -> void:
+	if pending_chunk_coords.is_empty():
+		return
+	var count := mini(CHUNKS_PER_FRAME, pending_chunk_coords.size())
+	for i in range(count):
+		var coords: Vector2i = pending_chunk_coords.pop_front()
+		var key := "%d:%d" % [coords.x, coords.y]
+		if static_chunk_nodes.has(key):
+			continue
+		var node = CityChunkCanvas.new()
+		node.name = "Terrain_%d_%d" % [coords.x, coords.y]
+		add_child(node)
+		node.configure(self, coords, pending_chunk_budget, pending_chunk_zoom)
+		static_chunk_nodes[key] = node
+		chunk_build_count += 1
 
 func _static_tile_data(tile: Vector2i) -> Dictionary:
 	if terrain_cache.has(tile):
@@ -597,6 +620,7 @@ func _process(delta: float) -> void:
 		chunk_sync_elapsed = 0.0
 		chunk_sync_requested = false
 		_sync_chunk_canvases()
+	_build_pending_chunks()
 	var blend := 1.0 - exp(-CAMERA_ZOOM_RESPONSE * maxf(delta, 0.0))
 	var previous := camera.zoom.x
 	var next := lerpf(previous, target_zoom, blend)
