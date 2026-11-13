@@ -266,7 +266,7 @@ func _add_action(title: String, callback: Callable) -> void:
 	actions.add_child(button)
 
 func _buy_land() -> void:
-	if mmo_panel != null and mmo_panel.is_connected():
+	if mmo_panel != null and mmo_panel.online_active():
 		message_label.text = "Участки на локальной карте не меняют серверную собственность."
 		return
 	var kind: String = cells.get(selected, "Свободный участок")
@@ -275,7 +275,7 @@ func _buy_land() -> void:
 	queue_redraw()
 
 func _construct(kind: String) -> void:
-	if mmo_panel != null and mmo_panel.is_connected():
+	if mmo_panel != null and mmo_panel.online_active():
 		message_label.text = "Строительство MMO выполняется серверными командами."
 		return
 	message_label.text = company.construct(city_index, selected, kind)
@@ -299,7 +299,7 @@ func _advance_day() -> void:
 	queue_redraw()
 
 func _send_bread() -> void:
-	if mmo_panel != null and mmo_panel.is_connected():
+	if mmo_panel != null and mmo_panel.online_active():
 		message_label.text = "Для серверной логистики используйте панель MMO справа."
 		return
 	var target := (city_index + 1) % CityGenerator.CITIES.size()
