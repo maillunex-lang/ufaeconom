@@ -14,7 +14,7 @@ func _ready() -> void:
     z_index = 10
 
 func _process(delta: float) -> void:
-    if city == null or city.camera == null or city.camera.zoom.x < 0.72:
+    if city == null or city.camera == null or city.camera.zoom.x < 0.72 or detail_quality == 0:
         return
     clock += delta
     redraw_clock += delta
@@ -28,7 +28,7 @@ func _iso(p: Vector2) -> Vector2:
 func _draw() -> void:
     if city.camera == null:
         return
-    if city.camera.zoom.x < 0.72:
+    if city.camera.zoom.x < 0.72 or detail_quality == 0:
         return
     var rect: Rect2i = city._visible_tile_rect()
     var chunks: Array = city._active_chunks()
@@ -37,8 +37,6 @@ func _draw() -> void:
         open[key] = true
     var vehicle_count := 0
     var drawn_routes := 0
-    if detail_quality == 0:
-        return
     var max_vehicles := 12 if detail_quality == 0 else 32 if detail_quality == 1 else 48
     var max_people := 10 if detail_quality == 0 else 32 if detail_quality == 1 else 48
     var people_count := 0
