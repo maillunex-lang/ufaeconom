@@ -31,6 +31,11 @@ var business_title: Label
 var business_actions: HBoxContainer
 var settings_button: Button
 var compact_layout := false
+var top_header: HBoxContainer
+var construction_scroll: ScrollContainer
+var business_scroll: ScrollContainer
+var hud_refresh_accum := 0.0
+const HUD_REFRESH_SECONDS := 0.20
 var construction_panel: PanelContainer
 var construction_title: Label
 var construction_status: Label
@@ -62,7 +67,10 @@ func _ready() -> void:
     business_panel = _panel("BusinessDetails")
     var business_box := VBoxContainer.new()
     business_box.add_theme_constant_override("separation", 8)
-    business_panel.add_child(business_box)
+    business_scroll = ScrollContainer.new()
+    business_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+    business_panel.add_child(business_scroll)
+    business_scroll.add_child(business_box)
     var business_header := HBoxContainer.new()
     business_box.add_child(business_header)
     business_title = _label(business_header, "ПРЕДПРИЯТИЕ", 18)
@@ -80,7 +88,10 @@ func _ready() -> void:
     construction_panel = _panel("ConstructionCard")
     var construction_box := VBoxContainer.new()
     construction_box.add_theme_constant_override("separation", 8)
-    construction_panel.add_child(construction_box)
+    construction_scroll = ScrollContainer.new()
+    construction_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+    construction_panel.add_child(construction_scroll)
+    construction_scroll.add_child(construction_box)
     construction_title = _label(construction_box, "СТРОИТЕЛЬСТВО", 19)
     construction_status = _label(construction_box, "Выберите свободный участок", 15)
     construction_cost = _label(construction_box, "", 16)
@@ -135,9 +146,10 @@ func _ready() -> void:
     mission_box.add_child(mission_go)
     mission_hint = _label(mission_box, "Учебный прогресс сохраняется на устройстве", 12)
     mission_panel.visible = false
-    var header := HBoxContainer.new()
-    header.add_theme_constant_override("separation", 16)
-    top.add_child(header)
+    top_header = HBoxContainer.new()
+    top_header.add_theme_constant_override("separation", 16)
+    top.add_child(top_header)
+    var header := top_header
     city_text = _label(header, "ГОРОД", 19)
     money_text = _label(header, "Баланс: ...", 18)
     calendar_text = _label(header, "Дата: ...", 16)
@@ -208,8 +220,23 @@ func _ready() -> void:
     _update_nav()
     details_text = _label(details, "Нажмите на участок для информации", 15)
     details.visible = false
+    set_process(true)
     get_viewport().size_changed.connect(_layout)
     call_deferred("_layout")
+
+func _process(delta: float) -> void:
+    hud_refresh_accum += delta
+    if hud_refresh_accum >= HUD_REFRESH_SECONDS:
+        hud_refresh_accum = 0.0
+        refresh_missions()
+
+
+static func fit_panel(width: float, height: float, preferred_width: float, preferred_height: float, top_margin: float, bottom_margin: float) -> Rect2:
+    var w := minf(preferred_width, maxf(0.0, width - 8.0))
+    var available := maxf(0.0, height - top_margin - bottom_margin)
+    var h := minf(preferred_height, available)
+    return Rect2(Vector2((width - w) * 0.5, top_margin), Vector2(w, h))
+
 
 func _panel(n: String) -> PanelContainer:
     var panel := PanelContainer.new()
@@ -257,7 +284,7 @@ func _on_construction_choice(index: int) -> void:
 
 
 func update_construction() -> void:
-    if game == null or game.selected.x < 0 or menu_open:
+    if game == null or game.selected.x < 0 or menu_open or mission_panel.visible:
         construction_panel.visible = false
         return
     var tile: Vector2i = game.selected
@@ -528,7 +555,11 @@ func update_values() -> void:
     city_text.text = "▥ " + str(game.city_label.text).replace("Город: ", "").replace(" (демонстрация)", "")
     money_text.text = "Баланс: %d ₽" % int(game.mmo_panel.client.snapshot.get("cash_minor", 0) / 100) if game.mmo_panel.online_active() else "Локально: %d ₽" % game.company.cash
     calendar_text.text = "MMO • день %d" % int(game.mmo_panel.client.snapshot.get("game_day", 0)) if game.mmo_panel.online_active() else str(game.Calendar.label(game.company.day)) + " • 1 мес. / 24 ч"
-    if game.selected.x >= 0:
+    if mission_panel.visible:
+        business_panel.visible = false
+        construction_panel.visible = false
+        details.visible = false
+    elif game.selected.x >= 0:
         var building: String = game._building_at(game.selected)
         if building != "" and not menu_open:
             business_panel.visible = true
@@ -541,7 +572,8 @@ func update_values() -> void:
     else:
         business_panel.visible = false
         details.visible = false
-    update_construction()
+    if not mission_panel.visible:
+        update_construction()
     refresh_missions()
     _layout()
 
@@ -562,29 +594,37 @@ func _layout() -> void:
     city_text.add_theme_font_size_override("font_size", 14 if compact_layout else 19)
     money_text.add_theme_font_size_override("font_size", 14 if compact_layout else 18)
     calendar_text.add_theme_font_size_override("font_size", 12 if compact_layout else 16)
-    var bottom_height := 58.0 if compact_layout else 76.0
+    var bottom_height := 72.0 if compact_layout else 76.0
+    var top_height := 54.0 if compact_layout else 58.0
+    top_header.add_theme_constant_override("separation", 4 if compact_layout else 16)
+    calendar_text.visible = w >= 720
+    city_text.custom_minimum_size.x = 0
+    money_text.custom_minimum_size.x = 0
     bottom.position = Vector2(0, maxf(0, h - bottom_height))
     bottom.size = Vector2(w, bottom_height)
-    camera_home.position = Vector2(0, maxf(62, h - bottom_height - 62))
+    camera_home.position = Vector2(0, maxf(top_height + 4, h - bottom_height - 62))
     camera_home.size = Vector2(52, 52)
-    construction_toggle.position = Vector2(58, maxf(62, h - bottom_height - 60))
+    construction_toggle.position = Vector2(58, maxf(top_height + 4, h - bottom_height - 60))
     construction_toggle.size = Vector2(94, 48)
     menu_backdrop.position = Vector2.ZERO
     menu_backdrop.size = Vector2(w, h)
-    var menu_width := minf(470, w * 0.78)
-    var menu_height := minf(490, h * 0.84)
-    menu_overlay.position = Vector2((w - menu_width) * 0.5, (h - menu_height) * 0.5)
-    menu_overlay.size = Vector2(menu_width, menu_height)
+    var menu_rect := fit_panel(w, h, 470, 490, 4, 4)
+    menu_overlay.position = menu_rect.position
+    menu_overlay.size = menu_rect.size
     var detail_width := minf(460, w * 0.60)
-    details.position = Vector2((w - detail_width) * 0.5, 65)
+    details.position = Vector2((w - detail_width) * 0.5, top_height + 6)
     details.size = Vector2(detail_width, 54)
-    var card_width := minf(360, w * 0.42)
-    business_panel.position = Vector2(maxf(0, w - card_width), 66)
-    business_panel.size = Vector2(card_width, minf(240, h * 0.47))
-    var construction_width := minf(370, w * 0.48)
-    construction_panel.position = Vector2(maxf(0, w - construction_width), 66)
-    construction_panel.size = Vector2(construction_width, minf(265, maxf(120, h - bottom_height - 78)))
-    var mission_width := minf(510, w * 0.78)
-    var mission_height := minf(440, maxf(150, h - bottom_height - 74))
-    mission_panel.position = Vector2((w - mission_width) * 0.5, 62)
-    mission_panel.size = Vector2(mission_width, mission_height)
+    var card_width := minf(360, w)
+    business_panel.position = Vector2(maxf(0, w - card_width), top_height + 6)
+    business_panel.size = Vector2(card_width, maxf(0, minf(240, h - bottom_height - top_height - 14)))
+    var construction_width := minf(370, w)
+    construction_panel.position = Vector2(maxf(0, w - construction_width), top_height + 6)
+    construction_panel.size = Vector2(construction_width, maxf(0, minf(265, h - bottom_height - top_height - 14)))
+    var mission_rect := fit_panel(w, h, 510, 440, top_height + 6, bottom_height + 6)
+    mission_panel.position = mission_rect.position
+    mission_panel.size = mission_rect.size
+    # A card and a mission screen must never compete for the same touch area.
+    if mission_panel.visible:
+        construction_panel.visible = false
+        business_panel.visible = false
+        details.visible = false
