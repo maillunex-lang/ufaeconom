@@ -23,6 +23,7 @@ var bread_price: SpinBox
 var destination: OptionButton
 var freight_qty: SpinBox
 var status: Label
+var invest_confirm: ConfirmationDialog
 
 func _ready() -> void:
     layer = 19
@@ -54,6 +55,11 @@ func _ready() -> void:
         label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
         page.add_child(label)
         labels.append(label)
+    _action(pages[0], "Инвестировать в инфраструктуру района", _confirm_investment)
+    invest_confirm = ConfirmationDialog.new()
+    invest_confirm.title = "Инвестиция в инфраструктуру"
+    invest_confirm.confirmed.connect(_invest_district)
+    panel.add_child(invest_confirm)
     production_target = _spin(pages[1], "Партии за тик (0–4)", 0, 4, 1)
     _action(pages[1], "Установить план", _set_production)
     recipe_picker = OptionButton.new()
@@ -293,9 +299,9 @@ func refresh() -> void:
                 int(district.get("synthetic_population", 0)),
                 int(district.get("shops", 0)), int(district.get("factories", 0)),
                 int(district.get("estimated_bread_demand_per_tick", 0))]
-            labels[8].text += "\n  Привлекательность %d/100 • дороги %d • жилые участки %d" % [
+            labels[8].text += "\n  Привлекательность %d/100 • дороги %d • жилые участки %d • инвестиции %d/5" % [
                 int(infra.get("attractiveness", 0)), int(infra.get("roads", 0)),
-                int(infra.get("housing_tiles", 0))]
+                int(infra.get("housing_tiles", 0)), int(infra.get("investment_level", 0))]
     var competitors: Array = snapshot.get("npc_competitors", [])
     labels[7].text = "NPC-компании работают на сервере.\nОбновление решений: 1 игровой день."
     for competitor in competitors:
@@ -319,6 +325,40 @@ func refresh() -> void:
     var history: Array = snapshot.get("finance_history", [])
     for entry in history.slice(maxi(0, history.size() - 5)):
         labels[5].text += "\n%s: %d коп." % [str(entry.get("kind", "")), int(entry.get("amount", 0))]
+
+func _selected_district() -> Dictionary:
+    var facilities: Dictionary = mmo.client.snapshot.get("facilities", {})
+    var facility: Dictionary = facilities.get(_facility_id(), {})
+    var plot: Dictionary = facility.get("plot", {})
+    if plot.is_empty():
+        return {}
+    return {"city": str(facility.get("city", "")),
+            "district": "%d:%d" % [floori(int(plot.get("x", 0)) / 16.0), floori(int(plot.get("y", 0)) / 16.0)]}
+
+func _confirm_investment() -> void:
+    if not mmo.online_active():
+        return
+    var location := _selected_district()
+    if location.is_empty():
+        return
+    var level := 0
+    for district in mmo.client.snapshot.get("district_demand", []):
+        if str(district.get("city", "")) == location["city"] and str(district.get("district", "")) == location["district"]:
+            level = int(district.get("infrastructure", {}).get("investment_level", 0))
+            break
+    if level >= 5:
+        status.text = "Инфраструктура района улучшена до максимума"
+        return
+    invest_confirm.dialog_text = "Улучшить район %s / %s до уровня %d/5 за %d ₽?\nСписание подтвердит сервер." % [
+        location["city"], location["district"], level + 1, (level + 1) * 20000]
+    invest_confirm.popup_centered()
+
+func _invest_district() -> void:
+    if not mmo.online_active():
+        return
+    var location := _selected_district()
+    if not location.is_empty():
+        mmo.client.send_command("district.invest", location)
 
 func _send(kind: String, fields: Dictionary) -> void:
     if not mmo.online_active() or _facility_id() == "":
