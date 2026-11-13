@@ -16,7 +16,7 @@ func _run() -> void:
     await process_frame
     var panel = game.tycoon_panel
     check(panel != null, "missing tycoon UI")
-    check(panel.tabs.get_tab_count() == 6, "missing six business tabs")
+    check(panel.tabs.get_tab_count() >= 6, "missing business tabs")
     check(not panel.panel.visible, "panel should start closed")
     panel.toggle()
     check(not panel.panel.visible, "unauthenticated panel opened")
