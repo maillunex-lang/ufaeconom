@@ -8,9 +8,7 @@ func _initialize() -> void:
 	_test_capacity_and_shortages()
 	_test_household_budget()
 	_test_legacy_migration()
-	_test_main_ui()
-	print("ECONOMY_04_TESTS_PASSED")
-	quit()
+	call_deferred("_test_main_ui")
 
 func _fresh(label: String) -> RefCounted:
 	var c = Company.new()
@@ -148,13 +146,23 @@ func _test_main_ui() -> void:
 	ui_company.legacy_save_path = "user://economy_04_test_ui_legacy.json"
 	ui_company.reset()
 	get_root().add_child(scene)
-	assert(scene.get("economy_label") != null)
+	await process_frame
+	if scene.get("economy_label") == null:
+		push_error("UI economy label not initialized")
+		quit(1)
+		return
 	scene.call("_advance_day")
-	assert(ui_company.day == 1)
-	assert(str(scene.get("economy_label").text).contains("День 1"))
-	assert(str(scene.get("message_label").text).contains("прибыль"))
-	scene.call("_toggle_timer")
 	var timer: Timer = scene.get("day_timer")
-	assert(timer.paused)
+	if ui_company.day != 1 or not str(scene.get("economy_label").text).contains("День 1") or not str(scene.get("message_label").text).contains("прибыль"):
+		push_error("Economy UI day/profit update failed")
+		quit(1)
+		return
+	scene.call("_toggle_timer")
+	if not timer.paused:
+		push_error("Pause button did not pause simulation")
+		quit(1)
+		return
 	scene.queue_free()
 	print("SCENARIO_UI_TIMER_AND_NEXT_DAY_OK")
+	print("ECONOMY_04_TESTS_PASSED")
+	quit(0)
