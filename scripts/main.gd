@@ -9,6 +9,7 @@ const Atmosphere25D = preload("res://scripts/city_atmosphere_25d.gd")
 const CompanyState = preload("res://scripts/company_state.gd")
 const Calendar = preload("res://scripts/game_calendar.gd")
 const MMOPanel = preload("res://scripts/mmo_panel.gd")
+const AndroidHUD074 = preload("res://scripts/android_hud_074.gd")
 const TILE_W := 96.0
 const TILE_H := 48.0
 const MAP_SIZE := 32
@@ -44,6 +45,7 @@ var city_label: Label
 var mmo_panel
 var atmosphere: Node2D
 var visual_quality := 1
+var android_hud: CanvasLayer
 
 func _ready() -> void:
 	camera = Camera2D.new()
@@ -65,6 +67,10 @@ func _ready() -> void:
 	company.load_game()
 	var catchup: Dictionary = company.sync_calendar(int(Time.get_unix_time_from_system()))
 	_load_city(company.city_index)
+	android_hud = AndroidHUD074.new()
+	android_hud.name = "AndroidHUD074"
+	add_child(android_hud)
+	android_hud.attach_legacy()
 	if int(catchup["advanced"]) > 0:
 		message_label.text = "Пока вас не было, прошло %d игровых дней" % int(catchup["advanced"])
 	day_timer = Timer.new()
@@ -290,6 +296,8 @@ func _update_actions() -> void:
 	var wallet: int = int(mmo_panel.client.snapshot.get("cash_minor", 0)) / 100 if _online_land() else company.cash
 	money_label.text = "Мой холдинг | %d ₽ | Кварталов: %d" % [wallet, _active_chunks().size()]
 	_refresh_economy_ui()
+	if android_hud != null:
+		android_hud.update_values()
 	for child in actions.get_children():
 		actions.remove_child(child)
 		child.queue_free()
