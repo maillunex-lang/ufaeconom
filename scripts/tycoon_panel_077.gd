@@ -42,7 +42,7 @@ func _ready() -> void:
     tabs = TabContainer.new()
     tabs.custom_minimum_size.y = 320
     body.add_child(tabs)
-    for tab in ["Обзор", "Производство", "Персонал", "Продажи", "Логистика", "Финансы", "Контракты", "Конкуренты", "Аналитика рынка", "Экономический советник"]:
+    for tab in ["Обзор", "Производство", "Персонал", "Продажи", "Логистика", "Финансы", "Контракты", "Конкуренты", "Аналитика рынка", "Экономический советник", "Автоматизация"]:
         var scroll := ScrollContainer.new()
         scroll.name = tab
         tabs.add_child(scroll)
@@ -93,6 +93,32 @@ func _ready() -> void:
     contract_picker = OptionButton.new()
     pages[6].add_child(contract_picker)
     _action(pages[6], "Принять контракт на выбранный склад", _accept_contract)
+    var automation_enable := CheckBox.new()
+    automation_enable.name = "AutomationEnabled"
+    automation_enable.text = "Включить автоматизацию выбранного предприятия"
+    pages[10].add_child(automation_enable)
+    var automation_buy := CheckBox.new()
+    automation_buy.name = "AutomationBuy"
+    automation_buy.text = "Автозакупки сырья (завод)"
+    pages[10].add_child(automation_buy)
+    var automation_restock := CheckBox.new()
+    automation_restock.name = "AutomationRestock"
+    automation_restock.text = "Автопополнение из своих заводов (магазин)"
+    pages[10].add_child(automation_restock)
+    var automation_production := CheckBox.new()
+    automation_production.name = "AutomationProduction"
+    automation_production.text = "Автоплан производства (завод)"
+    pages[10].add_child(automation_production)
+    var automation_pricing := CheckBox.new()
+    automation_pricing.name = "AutomationPricing"
+    automation_pricing.text = "Автоцены по конкурентам (магазин)"
+    pages[10].add_child(automation_pricing)
+    _spin(pages[10], "Дневной бюджет, коп. (0–5 000 000)", 0, 5000000, 5000).name = "AutomationBudget"
+    _spin(pages[10], "Целевой запас (0–300)", 0, 300, 1).name = "AutomationStock"
+    _spin(pages[10], "Лимит единиц за закупку (1–100)", 1, 100, 1).name = "AutomationQuantity"
+    _spin(pages[10], "План партий (0–4)", 0, 4, 1).name = "AutomationTarget"
+    _spin(pages[10], "Снижение цены относительно конкурента, коп.", 0, 1000, 50).name = "AutomationUndercut"
+    _action(pages[10], "Сохранить правила на сервере", _save_automation)
     status = Label.new()
     status.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
     body.add_child(status)
@@ -189,6 +215,24 @@ func refresh() -> void:
         if contract.get("status") == "offered" and str(contract.get("seller", "")) != str(snapshot.get("company", "")):
             contract_picker.add_item(str(contract.get("id", "")) + " " + str(contract.get("good", "")))
             contract_picker.set_item_metadata(contract_picker.item_count - 1, str(contract.get("id", "")))
+    var rules: Dictionary = snapshot.get("automation_rules", {})
+    var rule: Dictionary = rules.get(id, {})
+    var controls := {"enabled": "AutomationEnabled", "buy_inputs": "AutomationBuy",
+        "restock": "AutomationRestock", "production": "AutomationProduction",
+        "pricing": "AutomationPricing"}
+    for key in controls:
+        var checkbox: CheckBox = pages[10].get_node(str(controls[key]))
+        checkbox.button_pressed = bool(rule.get(key, false))
+    var numbers := {"daily_budget_minor": "AutomationBudget", "stock_target": "AutomationStock",
+        "max_purchase_units": "AutomationQuantity", "production_target": "AutomationTarget",
+        "undercut_minor": "AutomationUndercut"}
+    for key in numbers:
+        var spin: SpinBox = pages[10].get_node(str(numbers[key]))
+        spin.value = int(rule.get(key, 1 if key == "max_purchase_units" else 0))
+    labels[10].text = "Сервер проверяет бюджет и права. Решения выполняются раз в игровой день."
+    for event in snapshot.get("automation_events", []).slice(-12):
+        labels[10].text += "\nТик %d • %s: %s" % [
+            int(event.get("tick", 0)), str(event.get("action", "")), str(event.get("detail", ""))]
     var intelligence: Dictionary = snapshot.get("economic_intelligence", {})
     var profitability: Dictionary = intelligence.get("profitability", {})
     labels[9].text = "ЭКОНОМИЧЕСКИЙ СОВЕТНИК\nПрогноз: 1 игровой день, среднее продаж за 7 дней.\nЭто оценка, а не гарантия.\n\nФинансовый результат (накопленный): %d коп.\nВыручка: %d коп." % [
@@ -298,3 +342,18 @@ func _accept_contract() -> void:
 
 func _expand_storage() -> void:
     _send("facility.expand_storage", {})
+func _save_automation() -> void:
+    if not mmo.online_active() or _facility_id() == "":
+        return
+    var fields := {}
+    var flags := {"enabled": "AutomationEnabled", "buy_inputs": "AutomationBuy",
+        "restock": "AutomationRestock", "production": "AutomationProduction",
+        "pricing": "AutomationPricing"}
+    for key in flags:
+        fields[key] = (pages[10].get_node(str(flags[key])) as CheckBox).button_pressed
+    var limits := {"daily_budget_minor": "AutomationBudget", "stock_target": "AutomationStock",
+        "max_purchase_units": "AutomationQuantity", "production_target": "AutomationTarget",
+        "undercut_minor": "AutomationUndercut"}
+    for key in limits:
+        fields[key] = int((pages[10].get_node(str(limits[key])) as SpinBox).value)
+    _send("automation.configure", fields)
