@@ -238,10 +238,13 @@ func _draw() -> void:
 	var far_lod := detail_budget == 0
 	var plots := _city_plots()
 	var invested_levels: Dictionary = {}
+	var residential_tiers: Dictionary = {}
 	if mmo_panel != null and mmo_panel.online_active():
 		for district_data in mmo_panel.client.snapshot.get("district_demand", []):
 			if str(district_data.get("city", "")) == Land.CITY_IDS[city_index]:
-				invested_levels[str(district_data.get("district", ""))] = clampi(int(district_data.get("infrastructure", {}).get("investment_level", 0)), 0, 5)
+				var key := str(district_data.get("district", ""))
+				invested_levels[key] = clampi(int(district_data.get("infrastructure", {}).get("investment_level", 0)), 0, 5)
+				residential_tiers[key] = clampi(int(district_data.get("residential_tier", 0)), 0, 5)
 	var opened: Dictionary = {}
 	for id in _active_chunks():
 		opened[id] = true
@@ -282,6 +285,11 @@ func _draw() -> void:
 			if not far_lod and not invested_levels.is_empty():
 				var district_key := "%d:%d" % [floori(float(x) / 16.0), floori(float(y) / 16.0)]
 				CityDetail075.draw_investment(self, pos, tile, kind, int(invested_levels.get(district_key, 0)), detail_budget)
+			if not far_lod and not residential_tiers.is_empty():
+				var residential_key := "%d:%d" % [floori(float(x) / 16.0), floori(float(y) / 16.0)]
+				var tier := int(residential_tiers.get(residential_key, 0))
+				CityDetail075.draw_residential_growth(self, pos, tile, kind, tier, detail_budget)
+				CityDetail075.draw_neighborhood_amenities(self, pos, tile, kind, tier, detail_budget)
 			if show_available_plots and not far_lod and kind == "Свободный участок" and not plots.has(Land.plot_key(tile)):
 				draw_polyline(PackedVector2Array([diamond[0],diamond[1],diamond[2],diamond[3],diamond[0]]), Color("#66d5ae"), 1.5)
 			if plots.has(Land.plot_key(tile)):
