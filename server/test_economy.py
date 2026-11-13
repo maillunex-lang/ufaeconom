@@ -78,6 +78,23 @@ class Economy06Tests(unittest.TestCase):
                 self.issue(invalid[0], invalid[1], **invalid[2])
         self.assertTrue(econ.audit_world(self.w))
 
+    def test_two_player_companies_have_separate_ownership(self) -> None:
+        self.assertIn("company:rival", self.w["wallets"])
+        self.assertTrue(self.w["facilities"]["rival-shop"]["owner"] == "rival")
+        with self.assertRaises(econ.EconomyError):
+            self.issue("steal-00001", "facility.set_price",
+                       facility_id="rival-shop", good="bread", price_minor=12000)
+        before = econ.money_total(self.w)
+        result = econ.apply_command(self.w, "rival", {
+            "command_id": "rival-0001", "expected_revision": self.w["revision"],
+            "type": "facility.set_price", "facility_id": "rival-shop",
+            "good": "bread", "price_minor": 14000,
+        })
+        self.assertTrue(result["ok"])
+        self.assertEqual(self.w["facilities"]["rival-shop"]["prices"]["bread"], 14000)
+        self.assertEqual(econ.money_total(self.w), before)
+        self.assertTrue(econ.audit_world(self.w))
+
     def test_separate_company_finances_build_and_budget(self) -> None:
         before = econ.money_total(self.w)
         result = self.issue("build-00001", "facility.build",
