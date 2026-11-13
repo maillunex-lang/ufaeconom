@@ -48,8 +48,8 @@ def _facility(owner: str, city: str, kind: str, ident: str,
         "stock": {good: int((stock or {}).get(good, 0)) for good in GOODS},
         "basis": {good: 0 for good in GOODS}, "capacity": CAPACITY[kind],
         "prices": {"bread": BASE_PRICES["bread"], "milk": BASE_PRICES["milk"]},
-        "reputation": 70 if owner == "player" else 60,
-        "customer_distance_km": 3 if owner == "player" else 7,
+        "reputation": 70 if owner != "npc" else 60,
+        "customer_distance_km": 3 if owner != "npc" else 7,
         "auto_buy_limit": 2 if kind == "factory" else 0,
     }
 
