@@ -156,17 +156,16 @@ func _test_main_ui() -> void:
 	scene.call("_load_city", 0)
 	scene.call("_advance_day")
 	var timer: Timer = scene.get("day_timer")
-	if ui_company.day != 1 or not str(scene.get("economy_label").text).contains("День 1") or not str(scene.get("message_label").text).contains("прибыль"):
+	if ui_company.day != 1 or not str(scene.get("economy_label").text).contains("02.01.0001") or not str(scene.get("message_label").text).contains("прибыль"):
 		push_error("Economy UI day/profit update failed: day=%d; dashboard=%s; message=%s" % [ui_company.day, scene.get("economy_label").text, scene.get("message_label").text])
 		quit(1)
 		return
-	scene.call("_toggle_timer")
-	if not timer.paused:
-		push_error("Pause button did not pause simulation")
+	if timer.wait_time != 30.0 or timer.paused:
+		push_error("Live calendar polling timer is not running at 30 seconds")
 		quit(1)
 		return
 	scene.queue_free()
-	print("SCENARIO_UI_TIMER_AND_NEXT_DAY_OK")
+	print("SCENARIO_UI_CALENDAR_AND_NEXT_DAY_OK")
 	print("ECONOMY_04_TESTS_PASSED")
 	quit(0)
 
