@@ -654,6 +654,82 @@ def market_report(w: dict) -> dict:
     return report
 
 
+def economic_intelligence(w: dict, actor: str) -> dict:
+    """Read-only, integer-only decision support; forecasts are estimates."""
+    if not isinstance(actor, str) or actor in NPC_OWNERS or "company:" + actor not in w["wallets"]:
+        raise EconomyError("unknown actor")
+    days = w.get("market_daily", [])[-7:]
+    observed_days = len(days)
+    forecasts = {}
+    for city in CITIES:
+        forecasts[city] = {}
+        for good in ("bread", "milk", "flour"):
+            history = [sum(units for key, units in day.items()
+                           if key.startswith(city + ":" + good + ":"))
+                       for day in days]
+            # Smoothed recent average. Zero observations is explicitly low confidence.
+            forecast = (sum(history) + observed_days // 2) // observed_days if observed_days else 0
+            theoretical = DEMAND[city][good] * TICKS_PER_DAY
+            forecasts[city][good] = {
+                "forecast_daily_units": forecast,
+                "observed_days": observed_days,
+                "theoretical_daily_demand": theoretical,
+                "unserved_daily_units_estimate": max(0, theoretical - forecast),
+                "confidence": "limited" if observed_days < 7 else "observed",
+            }
+    metrics = w["company_metrics"][actor]
+    revenue = metrics["revenue"]
+    profit = metrics["profit"]
+    profitability = {
+        "revenue_minor": revenue, "profit_minor": profit,
+        "cogs_minor": metrics["cogs"],
+        "operating_expense_minor": metrics["operating_expense"],
+        "freight_minor": metrics["freight"],
+        "margin_bps": profit * 10000 // revenue if revenue else None,
+        "basis": "cumulative",
+    }
+    plans = []
+    recommendations = []
+    owned = sorted((f for f in w["facilities"].values() if f["owner"] == actor),
+                   key=lambda f: f["id"])
+    for fac in owned:
+        city = fac["city"]
+        free = max(0, fac["capacity"] - sum(fac["stock"].values()) - _inbound(w, fac["id"]))
+        if fac["kind"] == "factory":
+            recipe = RECIPES[fac.get("recipe", "bread")]
+            raw, raw_per_batch = recipe[0], recipe[1]
+            required = min(MAX_PRODUCTION_BATCH, fac.get("production_target", 1)) * raw_per_batch * TICKS_PER_DAY
+            on_hand = fac["stock"][raw]
+            shortage = max(0, required - on_hand)
+            qty = 0
+            if raw in SOURCE_PRICES:
+                qty = min(shortage, free, w["suppliers"][city][raw],
+                          w["wallets"]["company:" + actor] // SOURCE_PRICES[raw], 100)
+            plans.append({"facility_id": fac["id"], "city": city, "good": raw,
+                          "stock_units": on_hand, "target_units": required,
+                          "shortage_units": shortage, "recommended_buy_units": qty,
+                          "estimated_cost_minor": qty * SOURCE_PRICES.get(raw, 0),
+                          "purchase_available": raw in SOURCE_PRICES})
+            if shortage:
+                recommendations.append({"facility_id": fac["id"], "kind": "input_shortage",
+                                        "good": raw, "units": shortage})
+        elif fac["kind"] == "shop":
+            for good in ("bread", "milk", "flour"):
+                expected = forecasts[city][good]["forecast_daily_units"]
+                if not observed_days:
+                    expected = DEMAND[city][good] * TICKS_PER_DAY
+                shortage = max(0, expected - fac["stock"][good])
+                if shortage:
+                    recommendations.append({"facility_id": fac["id"], "kind": "stockout_risk",
+                                            "good": good, "units": shortage})
+    if revenue > 0 and profit < 0:
+        recommendations.append({"facility_id": "", "kind": "negative_margin",
+                                "good": "", "units": 0})
+    return {"forecast_horizon_days": 1, "forecast_method": "observed_7d_average",
+            "forecasts": forecasts, "profitability": profitability,
+            "procurement_plans": plans, "recommendations": recommendations[:30]}
+
+
 def _npc_event(w: dict, owner: str, action: str, detail: str) -> None:
     events = w.setdefault("npc_decisions", [])
     events.append({"tick": w["tick"], "owner": owner, "action": action, "detail": detail})
@@ -1015,6 +1091,7 @@ def snapshot(w: dict, actor: str) -> dict:
         "shipments": copy.deepcopy([s for s in w["shipments"] if s["owner"] == actor]),
         "market": market, "market_analytics": market_report(w),
         "market_window_days": len(w.get("market_daily", [])),
+        "economic_intelligence": economic_intelligence(w, actor),
         "stats": copy.deepcopy(w["stats"]),
         "npc_competitors": [{"owner": owner, "strategy": NPC_STRATEGIES[owner],
             "facilities": sum(1 for f in w["facilities"].values() if f["owner"] == owner),

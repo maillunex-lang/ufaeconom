@@ -42,7 +42,7 @@ func _ready() -> void:
     tabs = TabContainer.new()
     tabs.custom_minimum_size.y = 320
     body.add_child(tabs)
-    for tab in ["Обзор", "Производство", "Персонал", "Продажи", "Логистика", "Финансы", "Контракты", "Конкуренты", "Аналитика рынка"]:
+    for tab in ["Обзор", "Производство", "Персонал", "Продажи", "Логистика", "Финансы", "Контракты", "Конкуренты", "Аналитика рынка", "Экономический советник"]:
         var scroll := ScrollContainer.new()
         scroll.name = tab
         tabs.add_child(scroll)
@@ -189,6 +189,32 @@ func refresh() -> void:
         if contract.get("status") == "offered" and str(contract.get("seller", "")) != str(snapshot.get("company", "")):
             contract_picker.add_item(str(contract.get("id", "")) + " " + str(contract.get("good", "")))
             contract_picker.set_item_metadata(contract_picker.item_count - 1, str(contract.get("id", "")))
+    var intelligence: Dictionary = snapshot.get("economic_intelligence", {})
+    var profitability: Dictionary = intelligence.get("profitability", {})
+    labels[9].text = "ЭКОНОМИЧЕСКИЙ СОВЕТНИК\nПрогноз: 1 игровой день, среднее продаж за 7 дней.\nЭто оценка, а не гарантия.\n\nФинансовый результат (накопленный): %d коп.\nВыручка: %d коп." % [
+        int(profitability.get("profit_minor", 0)), int(profitability.get("revenue_minor", 0))]
+    if profitability.get("margin_bps") != null:
+        labels[9].text += "\nРентабельность продаж: %.1f%%" % [float(profitability["margin_bps"]) / 100.0]
+    var forecasts: Dictionary = intelligence.get("forecasts", {})
+    for city in ["ufa", "sterlitamak", "tuymazy", "beloretsk"]:
+        var city_forecast: Dictionary = forecasts.get(city, {})
+        labels[9].text += "\n\n%s:" % city
+        for good in ["bread", "milk", "flour"]:
+            var data: Dictionary = city_forecast.get(good, {})
+            labels[9].text += "\n%s: ~%d ед./день, неудовлетворённый спрос ~%d" % [
+                good, int(data.get("forecast_daily_units", 0)),
+                int(data.get("unserved_daily_units_estimate", 0))]
+    labels[9].text += "\n\nПЛАН ЗАКУПОК"
+    for plan in intelligence.get("procurement_plans", []):
+        labels[9].text += "\n%s: %s, нехватка %d, можно купить %d ед. за %d коп." % [
+            str(plan.get("facility_id", "")), str(plan.get("good", "")),
+            int(plan.get("shortage_units", 0)), int(plan.get("recommended_buy_units", 0)),
+            int(plan.get("estimated_cost_minor", 0))]
+    labels[9].text += "\n\nРЕКОМЕНДАЦИИ"
+    for tip in intelligence.get("recommendations", []):
+        labels[9].text += "\n%s: %s %s (%d ед.)" % [
+            str(tip.get("facility_id", "")), str(tip.get("kind", "")),
+            str(tip.get("good", "")), int(tip.get("units", 0))]
     var market_data: Dictionary = snapshot.get("market_analytics", {})
     labels[8].text = "Рынок: реальные продажи за %d игровых дней (макс. 30)." % int(snapshot.get("market_window_days", 0))
     for city in ["ufa", "sterlitamak", "tuymazy", "beloretsk"]:
