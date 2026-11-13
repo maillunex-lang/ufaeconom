@@ -503,6 +503,22 @@ def _npc_reprice(w: dict) -> None:
                                      min(BASE_PRICES[good] * 3 // 2, next_price))
 
 
+def _district_retail_score(fac: dict, competitors: list[dict]) -> int:
+    """Deterministic integer spatial preference, without changing total city demand.
+
+    Shop proximity to the city center and competing shops on the same 16x16
+    parcel chunk affect the order in which residents choose available shops.
+    """
+    plot = fac.get("plot") or {"x": 16, "y": 16}
+    x, y = int(plot["x"]), int(plot["y"])
+    center_distance = x + y
+    same_district = sum(1 for other in competitors
+                        if other["id"] != fac["id"]
+                        and int((other.get("plot") or {}).get("x", 16)) // 16 == x // 16
+                        and int((other.get("plot") or {}).get("y", 16)) // 16 == y // 16)
+    return center_distance * 9 + same_district * 120
+
+
 def _retail(w: dict) -> None:
     recent = {}
     for city in CITIES:
@@ -512,9 +528,12 @@ def _retail(w: dict) -> None:
                      and fac["stock"][good] > 0]
             if not shops:
                 continue
+            # District location and local competition now influence real
+            # retail allocation, while citywide demand remains conserved.
             shops.sort(key=lambda f: (f["prices"][good] * 100 +
                                       f["customer_distance_km"] * 12 -
-                                      f["reputation"] * 2, f["id"]))
+                                      f["reputation"] * 2,
+                                      _district_retail_score(f, shops), f["id"]))
             # Price elasticity: expensive goods reduce *aggregate* demand.
             best_price = shops[0]["prices"][good]
             demand = min(DEMAND[city][good] * 2,
@@ -1270,7 +1289,7 @@ def competition_opportunities(w: dict, actor: str) -> list[dict]:
 
 
 def district_demand(w: dict, actor: str) -> list[dict]:
-    """Spatial market indicators. Estimates only, not a change to simulation demand."""
+    """Spatial market indicators; competition and proximity affect retail allocation."""
     land.ensure_world(w)
     result = []
     for city in CITIES:
