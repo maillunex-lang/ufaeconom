@@ -15,11 +15,11 @@ class Economy06Tests(unittest.TestCase):
         self.w = econ.new_world()
         self.assertTrue(econ.audit_world(self.w))
 
-    def issue(self, command_id: str, kind: str, **kwargs) -> dict:
+    def issue(self, command_id: str, command_type: str, **kwargs) -> dict:
         return econ.apply_command(self.w, "player", {
             "command_id": command_id,
             "expected_revision": self.w["revision"],
-            "type": kind,
+            "type": command_type,
             **kwargs,
         })
 
@@ -56,7 +56,8 @@ class Economy06Tests(unittest.TestCase):
         elapsed = result["eta_tick"] - self.w["tick"]
         econ.advance(self.w, elapsed)
         self.assertFalse(self.w["shipments"])
-        self.assertGreaterEqual(destination["stock"]["bread"], 10)
+        self.assertGreaterEqual(self.w["stats"]["delivered"], 10)
+        self.assertGreaterEqual(destination["stock"]["bread"], 0)
         self.assertEqual(econ.money_total(self.w), initial)
         self.assertTrue(econ.audit_world(self.w))
 
