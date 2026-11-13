@@ -74,6 +74,12 @@ func send_command(kind: String, fields: Dictionary) -> void:
 	_start("command", "/v1/command", JSON.stringify(payload))
 
 func disconnect_client() -> void:
+	if connected() and not _busy:
+		_start("logout", "/v1/logout", "{}")
+		return
+	_clear_local()
+
+func _clear_local() -> void:
 	token = ""
 	actor = ""
 	snapshot.clear()
@@ -105,6 +111,8 @@ func _on_response(result: int, response_code: int, _headers: PackedStringArray, 
 	var operation := _operation
 	_busy = false
 	if result != HTTPRequest.RESULT_SUCCESS:
+		if operation == "logout":
+			_clear_local()
 		request_failed.emit("Сервер недоступен (код сети %d)" % result)
 		return
 	var decoded: Variant = JSON.parse_string(data.get_string_from_utf8())
@@ -113,6 +121,8 @@ func _on_response(result: int, response_code: int, _headers: PackedStringArray, 
 		return
 	var response: Dictionary = decoded
 	if response_code != 200:
+		if operation == "logout":
+			_clear_local()
 		request_failed.emit("Сервер %d: %s" % [response_code, str(response.get("error", "ошибка запроса"))])
 		if response_code == 409 and connected():
 			call_deferred("fetch_snapshot")
@@ -132,3 +142,5 @@ func _on_response(result: int, response_code: int, _headers: PackedStringArray, 
 		"command":
 			command_ready.emit(response)
 			call_deferred("fetch_snapshot")
+		"logout":
+			_clear_local()
