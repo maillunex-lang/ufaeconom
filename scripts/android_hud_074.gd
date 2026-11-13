@@ -14,6 +14,8 @@ var local_panels: Array[Control] = []
 var local_open := false
 var mmo_open := false
 var visual_quality := 1
+var business_panel: PanelContainer
+var business_text: Label
 
 func _ready() -> void:
     layer = 20
@@ -24,6 +26,9 @@ func _ready() -> void:
     top = _panel("HUDTop")
     bottom = _panel("HUDBottom")
     details = _panel("HUDDetails")
+    business_panel = _panel("BusinessDetails")
+    business_text = _label(business_panel, "Выберите предприятие", 15)
+    business_panel.visible = false
     var header := HBoxContainer.new()
     header.add_theme_constant_override("separation", 16)
     top.add_child(header)
@@ -41,6 +46,8 @@ func _ready() -> void:
     _button(nav, "MMO", _toggle_mmo)
     _button(nav, "Меню", _toggle_local)
     _button(nav, "Детали", _cycle_quality)
+    _button(nav, "Бизнес", _toggle_business)
+    _button(nav, "Авто FPS", _toggle_auto)
     details_text = _label(details, "Нажмите на участок для информации", 15)
     details.visible = false
     get_viewport().size_changed.connect(_layout)
@@ -89,9 +96,42 @@ func attach_legacy() -> void:
 
 func _cycle_quality() -> void:
     visual_quality = (visual_quality + 1) % 3
-    game.get_node("CityLife25D").detail_quality = visual_quality
-    game.atmosphere.set_quality(visual_quality)
+    game.performance.auto_enabled = false
+    game.performance.apply_quality(visual_quality)
     game.message_label.text = ["Детали: экономия", "Детали: баланс", "Детали: максимум"][visual_quality]
+
+func _toggle_auto() -> void:
+    game.performance.toggle_auto()
+    game.message_label.text = "Авто FPS: включено" if game.performance.auto_enabled else "Авто FPS: выключено"
+
+func _toggle_business() -> void:
+    business_panel.visible = not business_panel.visible
+    update_business()
+
+func update_business() -> void:
+    if game == null or game.selected.x < 0:
+        business_panel.visible = false
+        return
+    var building: String = game._building_at(game.selected)
+    if building == "":
+        business_text.text = "Выберите построенное предприятие"
+        return
+    var label := "Предприятие: %s" % building
+    if game.mmo_panel.online_active():
+        var kind := str(game.Land.SERVER_KINDS.get(building, ""))
+        var fields: Dictionary = game.SmartCity076.display_metrics(game.mmo_panel.client.snapshot, kind)
+        if fields.is_empty():
+            label += "\nДанные производства не предоставлены сервером"
+        else:
+            for key in fields:
+                label += "\n%s: %s" % [key, str(fields[key])]
+        var land: Dictionary = game._city_plots().get(game.Land.plot_key(game.selected), {})
+        var phase: String = game.SmartCity076.visual_construction_phase(land)
+        if phase != "unknown":
+            label += "\nСтроительство: " + phase
+    else:
+        label += "\nЛокальная демонстрация. Финансы в разделе Рынок"
+    business_text.text = label
 
 func _toggle_local() -> void:
     local_open = not local_open
@@ -140,3 +180,5 @@ func _layout() -> void:
     var detail_width := minf(460, w * 0.40)
     details.position = Vector2((w - detail_width) * 0.5, 65)
     details.size = Vector2(detail_width, 54)
+    business_panel.position = Vector2(maxf(0, w - 365), 66)
+    business_panel.size = Vector2(minf(365, w), minf(180, h * 0.32))
