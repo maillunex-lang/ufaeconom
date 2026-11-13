@@ -15,7 +15,10 @@ func _process(delta: float) -> void:
     if day_cycle_enabled:
         elapsed += delta
     redraw_clock += delta
-    var period := 0.33 if quality == 0 else 0.16 if quality == 1 else 0.09
+    # Static clear daylight needs no repeated full-screen overlay redraw.
+    if weather == 0 and quality == 0:
+        return
+    var period := 0.50 if quality == 0 else 0.25 if quality == 1 else 0.12
     if redraw_clock >= period:
         redraw_clock = 0.0
         queue_redraw()
@@ -26,15 +29,13 @@ func _draw() -> void:
     var bounds: Vector2 = get_viewport_rect().size / city.camera.zoom
     var visible := Rect2(city.camera.position - bounds * 0.5, bounds)
     var phase := fposmod(elapsed / 360.0, 1.0)
-    var night := clampf((absf(phase - 0.5) - 0.24) * 3.0, 0.0, 0.50)
+    var night := clampf((absf(phase - 0.5) - 0.28) * 2.2, 0.0, 0.22)
     if night > 0.01:
         draw_rect(visible, Color(0.07, 0.13, 0.28, night))
-    elif quality >= 1:
-        # A very light warm daylight tint; one rectangle, no post-processing pass.
-        draw_rect(visible, Color(0.97, 0.78, 0.49, 0.025))
+    # Clear daylight stays unfiltered. Avoid grey/blue full-screen haze.
     if weather == 0:
         return
-    var count := 18 if quality == 0 else 42 if quality == 1 else 75
+    var count := 8 if quality == 0 else 24 if quality == 1 else 48
     for i in range(count):
         var px := fposmod(float(i * 173) + elapsed * (95.0 if weather == 1 else 24.0), bounds.x)
         var py := fposmod(float(i * 97) + elapsed * (210.0 if weather == 1 else 36.0), bounds.y)

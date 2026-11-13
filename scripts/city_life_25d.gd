@@ -37,6 +37,8 @@ func _draw() -> void:
         open[key] = true
     var vehicle_count := 0
     var drawn_routes := 0
+    if detail_quality == 0:
+        return
     var max_vehicles := 12 if detail_quality == 0 else 32 if detail_quality == 1 else 48
     var max_people := 10 if detail_quality == 0 else 32 if detail_quality == 1 else 48
     var people_count := 0

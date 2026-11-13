@@ -236,6 +236,10 @@ func _draw() -> void:
 	var visible := _visible_tile_rect()
 	var detail_budget := CityDetail075.detail_budget(camera.zoom.x, performance.level if performance != null else 1)
 	var far_lod := detail_budget == 0
+	# At emergency quality avoid per-tile decoration even at close zoom.
+	if performance != null and performance.level == 0:
+		far_lod = true
+		detail_budget = 0
 	var plots := _city_plots()
 	var invested_levels: Dictionary = {}
 	var residential_tiers: Dictionary = {}
