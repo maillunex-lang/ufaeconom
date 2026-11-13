@@ -18,6 +18,7 @@ const CityChunkCanvas = preload("res://scripts/city_chunk_canvas_0870.gd")
 const CityBackground = preload("res://scripts/city_background_0870.gd")
 const CityProfiler = preload("res://scripts/city_profiler_08346.gd")
 const ChunkBudget = preload("res://scripts/chunk_budget_08356.gd")
+const AdaptiveChunkBudget = preload("res://scripts/adaptive_chunk_budget_08358.gd")
 const TILE_W := 96.0
 const TILE_H := 48.0
 const MAP_SIZE := 32
@@ -60,6 +61,11 @@ var pending_chunk_coords: Array[Vector2i] = []
 var pending_chunk_budget := 0
 var pending_chunk_zoom := 0.8
 var chunk_build_count := 0
+var adaptive_chunk_capacity := 2
+var adaptive_chunk_frame := 0
+var adaptive_chunk_fps := 60.0
+var adaptive_chunk_sample_frames := 0
+var adaptive_chunk_sample_time := 0.0
 # Cache only deterministic city layouts, never player-owned plots or economy state.
 const CITY_LAYOUT_CACHE_LIMIT := 2
 var city_layout_cache: Dictionary = {}
@@ -78,6 +84,9 @@ var last_chunk_visible := Rect2i()
 
 func _clear_chunk_canvases() -> void:
 	pending_chunk_coords.clear()
+	adaptive_chunk_capacity = 2
+	adaptive_chunk_sample_frames = 0
+	adaptive_chunk_sample_time = 0.0
 	for node in static_chunk_nodes.values():
 		node.queue_free()
 	static_chunk_nodes.clear()
@@ -126,7 +135,8 @@ func _sync_chunk_canvases() -> void:
 func _build_pending_chunks() -> void:
 	if pending_chunk_coords.is_empty():
 		return
-	var count := mini(CHUNKS_PER_FRAME, pending_chunk_coords.size())
+	var permitted := AdaptiveChunkBudget.frame_budget(adaptive_chunk_fps, adaptive_chunk_capacity, adaptive_chunk_frame)
+	var count := mini(CHUNKS_PER_FRAME, mini(permitted, pending_chunk_coords.size()))
 	for i in range(count):
 		var coords: Vector2i = pending_chunk_coords.pop_front()
 		var key := "%d:%d" % [coords.x, coords.y]
@@ -618,6 +628,16 @@ func _process(delta: float) -> void:
 		camera_priority_motion = (camera.position - last_chunk_camera_position).limit_length(360.0)
 	else:
 		camera_priority_motion = Vector2.ZERO
+	# Sample FPS over a window to avoid one-frame spikes changing workload.
+	adaptive_chunk_frame += 1
+	if delta > 0.0:
+		adaptive_chunk_sample_frames += 1
+		adaptive_chunk_sample_time += delta
+	if adaptive_chunk_sample_time >= 1.0:
+		adaptive_chunk_fps = float(adaptive_chunk_sample_frames) / adaptive_chunk_sample_time
+		adaptive_chunk_capacity = AdaptiveChunkBudget.capacity(adaptive_chunk_fps, adaptive_chunk_capacity)
+		adaptive_chunk_sample_frames = 0
+		adaptive_chunk_sample_time = 0.0
 	chunk_sync_elapsed += delta
 	# Update immediately when the camera enters a new tile range, zoom changes,
 	# or Android quality switches. Avoid blank terrain while panning quickly.
