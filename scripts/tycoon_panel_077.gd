@@ -301,6 +301,11 @@ func refresh() -> void:
                 int(district.get("estimated_bread_demand_per_tick", 0))]
             labels[8].text += "\n  Жилая застройка %d/5 • изменение населения %+d/мес." % [
                 int(district.get("residential_tier", 0)), int(district.get("population_trend", 0))]
+            var urban: Dictionary = district.get("urban_metrics", {})
+            labels[8].text += "\n  Транспорт %d/100 • загруженность %d/100 • земля ~%d ₽ • профиль %s" % [
+                int(urban.get("transport_access", 0)), int(urban.get("traffic_congestion", 0)),
+                int(urban.get("indicative_land_value_minor", 0)) / 100,
+                str(urban.get("specialization", "mixed"))]
             labels[8].text += "\n  Привлекательность %d/100 • дороги %d • жилые участки %d • инвестиции %d/5" % [
                 int(infra.get("attractiveness", 0)), int(infra.get("roads", 0)),
                 int(infra.get("housing_tiles", 0)), int(infra.get("investment_level", 0))]
