@@ -19,6 +19,42 @@ static func palette(kind: String, district: int) -> Color:
         return c.lerp(Color("#d9c0a3"), 0.22)
     return c
 
+## Cosmetic-only stages. Real build completion is always controlled by existing economy/server.
+static func preview_stage(elapsed: float) -> int:
+    return mini(2, maxi(0, int(elapsed / 0.65)))
+
+
+static func draw_preview(canvas: Node2D, pos: Vector2, kind: String, district: int, elapsed: float) -> void:
+    var stage := preview_stage(elapsed)
+    var tint := palette(kind, district)
+    # Ground survey, foundations and then a transparent scaffold.
+    canvas.draw_colored_polygon(PackedVector2Array([
+        pos+Vector2(0,-21), pos+Vector2(37,-1),
+        pos+Vector2(0,19), pos+Vector2(-37,-1)
+    ]), Color(0.15,0.58,0.50,0.23))
+    canvas.draw_polyline(PackedVector2Array([
+        pos+Vector2(0,-21),pos+Vector2(37,-1),
+        pos+Vector2(0,19),pos+Vector2(-37,-1),pos+Vector2(0,-21)
+    ]), Color("#70ddbf"), 2.0)
+    if stage >= 1:
+        canvas.draw_colored_polygon(PackedVector2Array([
+            pos+Vector2(-23,-12),pos+Vector2(0,1),
+            pos+Vector2(23,-12),pos+Vector2(0,-25)
+        ]),tint.darkened(0.28))
+        for x in [-21.0, 21.0]:
+            canvas.draw_line(pos+Vector2(x,-14),pos+Vector2(x,-30),Color("#d7bb79"),2.0)
+    if stage >= 2:
+        # Scaffolding is a preview, not an assertion of server-side construction progress.
+        for x in [-22.0, 0.0, 22.0]:
+            canvas.draw_line(pos+Vector2(x,-15),pos+Vector2(x,-63),Color("#e1b965"),2.0)
+        for y in [-30.0,-46.0,-62.0]:
+            canvas.draw_line(pos+Vector2(-23,y),pos+Vector2(23,y),Color("#d9a85a"),1.4)
+        canvas.draw_colored_polygon(PackedVector2Array([
+            pos+Vector2(-23,-63),pos+Vector2(0,-76),
+            pos+Vector2(23,-63),pos+Vector2(0,-50)
+        ]), Color(tint.r,tint.g,tint.b,0.50))
+
+
 static func draw(canvas: Node2D, pos: Vector2, kind: String, level: int = 1, building: bool = false, district: int = 0) -> void:
     var shade := palette(kind, district)
     var floor_count: int = 1 if kind in ["Склад","Автосалон","Магазин","Шахта"] else 2

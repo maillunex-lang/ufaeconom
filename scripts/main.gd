@@ -59,6 +59,8 @@ var mmo_panel
 var atmosphere: Node2D
 var visual_quality := 1
 var construction_preview := ""
+var construction_preview_elapsed := 0.0
+var show_available_plots := false
 var visual_detail := 1
 var android_hud: CanvasLayer
 var tycoon_panel: CanvasLayer
@@ -267,6 +269,8 @@ func _draw() -> void:
 					draw_rect(Rect2(pos + Vector2(-11, -17), Vector2(22, 22)), COLORS[kind])
 			if not far_lod and kind == "Свободный участок" and Land.has_ore(city_index, tile):
 				draw_circle(pos, 5.0, Color("#c28147"))
+			if show_available_plots and not far_lod and kind == "Свободный участок" and not plots.has(Land.plot_key(tile)):
+				draw_polyline(PackedVector2Array([diamond[0],diamond[1],diamond[2],diamond[3],diamond[0]]), Color("#66d5ae"), 1.5)
 			if plots.has(Land.plot_key(tile)):
 				var built: String = _building_at(tile)
 				if built != "":
@@ -278,7 +282,7 @@ func _draw() -> void:
 				if not far_lod:
 					draw_circle(pos + Vector2(0, 10), 4, Color("#ffd55b") if _owns_plot(tile) else Color("#eabf9a"))
 			if selected == tile and construction_preview != "" and _owns_plot(tile) and _building_at(tile) == "":
-				BuildingArt.draw(self, pos, "НИИ" if construction_preview == "Исследовательский центр" else construction_preview, 1, true, CityDetail075.district(tile))
+				BuildingArt.draw_preview(self, pos, "НИИ" if construction_preview == "Исследовательский центр" else construction_preview, CityDetail075.district(tile), construction_preview_elapsed)
 			if selected == tile:
 				draw_polyline(PackedVector2Array([diamond[0], diamond[1], diamond[2], diamond[3], diamond[0]]), Color("#ffe175"), 3.0)
 
@@ -456,6 +460,9 @@ func _process(delta: float) -> void:
 		if is_equal_approx(next, target_zoom):
 			zoom_anchor_valid = false
 		queue_redraw()
+	if construction_preview != "" and construction_preview_elapsed < 1.5:
+		construction_preview_elapsed += delta
+		queue_redraw()
 	if camera_debug != null:
 		camera_debug.text = "FPS %d  |  %.1f ms  |  x%.2f  |  LOD %s" % [
 			Engine.get_frames_per_second(), 1000.0 / maxf(Engine.get_frames_per_second(), 1),
@@ -530,12 +537,14 @@ func _preview_construction(kind: String) -> void:
 	if kind == "Шахта" and not Land.has_ore(city_index, selected):
 		return
 	construction_preview = kind
+	construction_preview_elapsed = 0.0
 	message_label.text = "Предпросмотр: %s • подтверждение не отправлено" % kind
 	_update_actions()
 	queue_redraw()
 
 func _cancel_preview() -> void:
 	construction_preview = ""
+	construction_preview_elapsed = 0.0
 	_update_actions()
 	queue_redraw()
 
@@ -544,6 +553,7 @@ func _confirm_preview() -> void:
 		return
 	var kind := construction_preview
 	construction_preview = ""
+	construction_preview_elapsed = 0.0
 	_construct(kind)
 
 func _construct(kind: String) -> void:
