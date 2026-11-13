@@ -237,6 +237,11 @@ func _draw() -> void:
 	var detail_budget := CityDetail075.detail_budget(camera.zoom.x, performance.level if performance != null else 1)
 	var far_lod := detail_budget == 0
 	var plots := _city_plots()
+	var invested_levels: Dictionary = {}
+	if mmo_panel != null and mmo_panel.online_active():
+		for district_data in mmo_panel.client.snapshot.get("district_demand", []):
+			if str(district_data.get("city", "")) == Land.CITY_IDS[city_index]:
+				invested_levels[str(district_data.get("district", ""))] = clampi(int(district_data.get("infrastructure", {}).get("investment_level", 0)), 0, 5)
 	var opened: Dictionary = {}
 	for id in _active_chunks():
 		opened[id] = true
@@ -274,6 +279,9 @@ func _draw() -> void:
 					draw_rect(Rect2(pos + Vector2(-11, -17), Vector2(22, 22)), COLORS[kind])
 			if not far_lod and kind == "Свободный участок" and Land.has_ore(city_index, tile):
 				draw_circle(pos, 5.0, Color("#c28147"))
+			if not far_lod and not invested_levels.is_empty():
+				var district_key := "%d:%d" % [floori(float(x) / 16.0), floori(float(y) / 16.0)]
+				CityDetail075.draw_investment(self, pos, tile, kind, int(invested_levels.get(district_key, 0)), detail_budget)
 			if show_available_plots and not far_lod and kind == "Свободный участок" and not plots.has(Land.plot_key(tile)):
 				draw_polyline(PackedVector2Array([diamond[0],diamond[1],diamond[2],diamond[3],diamond[0]]), Color("#66d5ae"), 1.5)
 			if plots.has(Land.plot_key(tile)):
