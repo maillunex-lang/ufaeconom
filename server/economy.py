@@ -48,6 +48,7 @@ def _facility(owner: str, city: str, kind: str, ident: str,
         "basis": {good: 0 for good in GOODS}, "capacity": CAPACITY[kind],
         "prices": {"bread": BASE_PRICES["bread"], "milk": BASE_PRICES["milk"]},
         "reputation": 70 if owner == "player" else 60,
+        "customer_distance_km": 3 if owner == "player" else 7,
         "auto_buy_limit": 2 if kind == "factory" else 0,
     }
 
@@ -285,7 +286,8 @@ def _retail(w: dict) -> None:
                      and fac["stock"][good] > 0]
             if not shops:
                 continue
-            shops.sort(key=lambda f: (f["prices"][good] * 100 -
+            shops.sort(key=lambda f: (f["prices"][good] * 100 +
+                                      f["customer_distance_km"] * 12 -
                                       f["reputation"] * 2, f["id"]))
             # Price elasticity: expensive goods reduce *aggregate* demand.
             best_price = shops[0]["prices"][good]
@@ -370,6 +372,8 @@ def apply_command(w: dict, actor: str, command: dict) -> dict:
         raise EconomyError("stale world revision")
     kind = command.get("type")
     fac_id = command.get("facility_id")
+    if fac_id is not None and not isinstance(fac_id, str):
+        raise EconomyError("invalid facility id")
     fac = w["facilities"].get(fac_id)
     if kind in ("facility.set_price", "facility.buy", "shipment.create"):
         if fac is None or fac["owner"] != actor:
@@ -388,14 +392,19 @@ def apply_command(w: dict, actor: str, command: dict) -> dict:
         if (good not in SOURCE_PRICES or type(quantity) is not int or
                 not 1 <= quantity <= 100):
             raise EconomyError("invalid purchase")
-        paid = _buy(w, fac, good, quantity)
-        if paid != quantity:
-            # _buy is atomic for the *fulfilled* portion only: refuse partial requests
-            # by preflight on a copy to prevent partial command execution.
+        capacity_left = fac["capacity"] - sum(fac["stock"].values()) - _inbound(w, fac["id"])
+        funds = w["wallets"]["company:" + actor]
+        if (w["suppliers"][fac["city"]][good] < quantity or
+                capacity_left < quantity or
+                funds < SOURCE_PRICES[good] * quantity):
             raise EconomyError("insufficient stock, space or funds")
-        result = {"ok": True, "quantity": paid}
+        bought = _buy(w, fac, good, quantity)
+        result = {"ok": True, "quantity": bought}
     elif kind == "shipment.create":
-        dst = w["facilities"].get(command.get("destination_id"))
+        destination_id = command.get("destination_id")
+        if not isinstance(destination_id, str):
+            raise EconomyError("invalid destination")
+        dst = w["facilities"].get(destination_id)
         good, amount = command.get("good"), command.get("quantity")
         if (dst is None or dst["owner"] != actor or dst["id"] == fac_id or
                 good not in GOODS or type(amount) is not int or
