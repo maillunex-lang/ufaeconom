@@ -54,6 +54,12 @@ var terrain_cache_misses := 0
 # Visible static terrain is drawn into persistent per-chunk canvas items.
 # Dynamic plots, selection and MMO overlays remain in main._draw().
 var static_chunk_nodes: Dictionary = {}
+# Cache only deterministic city layouts, never player-owned plots or economy state.
+const CITY_LAYOUT_CACHE_LIMIT := 2
+var city_layout_cache: Dictionary = {}
+var city_layout_order: Array[int] = []
+var city_layout_hits := 0
+var city_layout_misses := 0
 var visible_render_tiles := 0
 var visible_render_buildings := 0
 var chunk_sync_elapsed := 0.0
@@ -243,11 +249,34 @@ func _ready() -> void:
 	add_child(day_timer)
 	day_timer.start()
 
+func _city_layout(index: int) -> Dictionary:
+	var normalized := posmod(index, CityGenerator.CITIES.size())
+	if city_layout_cache.has(normalized):
+		city_layout_hits += 1
+		return city_layout_cache[normalized]
+	city_layout_misses += 1
+	var layout: Dictionary = CityGenerator.make_city(normalized)
+	if city_layout_cache.size() >= CITY_LAYOUT_CACHE_LIMIT:
+		city_layout_cache.erase(city_layout_order.pop_front())
+	city_layout_cache[normalized] = layout
+	city_layout_order.append(normalized)
+	return layout
+
+func _clear_city_layout_cache() -> void:
+	city_layout_cache.clear()
+	city_layout_order.clear()
+	city_layout_hits = 0
+	city_layout_misses = 0
+
 func _load_city(index: int) -> void:
-	city_index = posmod(index, CityGenerator.CITIES.size())
+	var normalized := posmod(index, CityGenerator.CITIES.size())
+	# Re-selecting the active city should not recreate its terrain or reset the camera.
+	if normalized == city_index and not cells.is_empty():
+		return
+	city_index = normalized
 	_clear_terrain_cache()
 	_clear_chunk_canvases()
-	var data: Dictionary = CityGenerator.make_city(city_index)
+	var data: Dictionary = _city_layout(city_index)
 	cells = data["cells"]
 	selected = Vector2i(-1, -1)
 	construction_preview = ""
