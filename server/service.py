@@ -6,6 +6,7 @@ No public listener, automatic account registration or production deployment.
 from __future__ import annotations
 
 import argparse
+import fcntl
 import getpass
 import hashlib
 import hmac
@@ -38,11 +39,22 @@ class WorldStore:
     def __init__(self, db_path: str | Path, epoch_unix: int | None = None):
         self.lock = threading.RLock()
         self.path = str(db_path)
+        # Single world writer per database, including the outbox and ledger.
+        # Second server processes must fail fast instead of duplicating ticks.
+        self._writer_lock = open(self.path + ".writer.lock", "a+b")
+        try:
+            fcntl.flock(self._writer_lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as exc:
+            self._writer_lock.close()
+            raise RuntimeError("world database already has an authoritative worker") from exc
         self.db = sqlite3.connect(self.path, timeout=20, check_same_thread=False,
                                   isolation_level=None)
         self.db.execute("PRAGMA journal_mode=WAL")
         self.db.execute("PRAGMA foreign_keys=ON")
         self.db.execute("PRAGMA busy_timeout=20000")
+        db_version = self.db.execute("PRAGMA user_version").fetchone()[0]
+        if db_version not in (0, 1):
+            raise RuntimeError("unsupported world database schema version")
         self.db.executescript("""
             CREATE TABLE IF NOT EXISTS world_state (
                 id INTEGER PRIMARY KEY CHECK(id = 1),
@@ -71,6 +83,8 @@ class WorldStore:
                 expires_unix INTEGER NOT NULL
             );
         """)
+        if db_version == 0:
+            self.db.execute("PRAGMA user_version=1")
         row = self.db.execute("SELECT payload FROM world_state WHERE id=1").fetchone()
         if row:
             self.world = json.loads(row[0])
@@ -230,6 +244,8 @@ class WorldStore:
     def close(self) -> None:
         with self.lock:
             self.db.close()
+            fcntl.flock(self._writer_lock.fileno(), fcntl.LOCK_UN)
+            self._writer_lock.close()
 
 
 class WorldHTTPServer(ThreadingHTTPServer):
@@ -298,6 +314,10 @@ class WorldHandler(BaseHTTPRequestHandler):
         token = header[7:]
         return self.store.authenticate(token), token
 
+    def setup(self) -> None:
+        super().setup()
+        self.connection.settimeout(10)
+
     def _handle(self, method: str) -> None:
         path = urlsplit(self.path).path
         try:
@@ -332,7 +352,8 @@ class WorldHandler(BaseHTTPRequestHandler):
                 self.store.logout(token)
                 self._respond(200, {"ok": True})
             elif method == "POST" and path == "/v1/command":
-                if not self.server.rate_ok("cmd:" + token, 120):
+                token_digest = hashlib.sha256(token.encode("utf-8")).hexdigest()
+                if not self.server.rate_ok("cmd:" + token_digest, 120):
                     self._respond(429, {"error": "rate limit"})
                     return
                 result = self.store.issue(actor, self._body())
@@ -348,6 +369,11 @@ class WorldHandler(BaseHTTPRequestHandler):
             self._respond(400, {"error": "invalid request"})
         except sqlite3.DatabaseError:
             self._respond(503, {"error": "storage unavailable"})
+        except Exception:
+            # Do not disclose a traceback or credentials to remote clients.
+            import traceback
+            traceback.print_exc()
+            self._respond(500, {"error": "internal server error"})
 
     def do_GET(self) -> None:
         self._handle("GET")
