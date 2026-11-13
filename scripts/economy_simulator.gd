@@ -26,6 +26,8 @@ const START_CITY_SUPPLIERS := 600000
 const START_CITY_BUDGET := 2000000
 const CITY_BREAD_DEMAND := [30, 22, 18, 15]
 const CITY_MILK_DEMAND := [16, 14, 11, 10]
+const CITY_GRAIN_SUPPLY := [30, 24, 18, 18]
+const CITY_MILK_SUPPLY := [24, 20, 16, 12]
 const BASE_CAPACITY := 80
 const WAREHOUSE_CAPACITY := 240
 
@@ -33,6 +35,7 @@ static func new_market() -> Dictionary:
 	return {
 		"stock": {"Зерно": 0, "Хлеб": 0, "Молоко": 0},
 		"inventory_cost": {"Зерно": 0, "Хлеб": 0, "Молоко": 0},
+		"supplier_stock": {"Зерно": 0, "Молоко": 0},
 		"residents_cash": START_CITY_RESIDENTS,
 		"supplier_cash": START_CITY_SUPPLIERS,
 		"city_budget": START_CITY_BUDGET
@@ -78,11 +81,15 @@ static func _procure(company: RefCounted, market: Dictionary, stats: Dictionary,
 		return false
 	if stock_total(market) + quantity > capacity(company, int(city_stats["city"])):
 		return false
+	var supplier_stock: Dictionary = market["supplier_stock"]
+	if int(supplier_stock.get(good, 0)) < quantity:
+		return false
 	var cost: int = int(GOODS[good]["buy"]) * quantity
 	if not _expense(company, market, stats, city_stats, cost, "supplier_cash", "Закупка %s" % good.to_lower()):
 		return false
 	var stock: Dictionary = market["stock"]
 	stock[good] = int(stock[good]) + quantity
+	supplier_stock[good] = int(supplier_stock[good]) - quantity
 	var inventory_cost: Dictionary = market["inventory_cost"]
 	inventory_cost[good] = int(inventory_cost[good]) + cost
 	city_stats["purchased"] = int(city_stats["purchased"]) + quantity
@@ -116,6 +123,13 @@ static func _sell(company: RefCounted, market: Dictionary, stats: Dictionary, ci
 		_expense(company, market, stats, city_stats, tax, "city_budget", "Налог с продаж", true)
 	return sold
 
+static func _npc_supply(market: Dictionary, city: int) -> void:
+	## Fictional local agriculture: goods enter a bounded NPC supplier pool.
+	## This is a goods source, NEVER a currency source.
+	var stock: Dictionary = market["supplier_stock"]
+	stock["Зерно"] = mini(int(stock["Зерно"]) + CITY_GRAIN_SUPPLY[city], CITY_GRAIN_SUPPLY[city] * 4)
+	stock["Молоко"] = mini(int(stock["Молоко"]) + CITY_MILK_SUPPLY[city], CITY_MILK_SUPPLY[city] * 4)
+
 static func _npc_income(market: Dictionary) -> void:
 	## Transfers from finite city treasury and local suppliers, not minted cash.
 	var from_city: int = mini(int(market["city_budget"]), 2500)
@@ -139,6 +153,7 @@ static func step(company: RefCounted) -> Dictionary:
 	}
 	for city in range(4):
 		var market: Dictionary = company.market(city)
+		_npc_supply(market, city)
 		_npc_income(market)
 		var stock: Dictionary = market["stock"]
 		var shops := 0
