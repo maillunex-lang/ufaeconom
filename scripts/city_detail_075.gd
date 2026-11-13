@@ -66,3 +66,29 @@ static func draw_business_activity(canvas: Node2D, pos: Vector2, kind: String, z
         canvas.draw_rect(Rect2(pos + Vector2(-18, 8), Vector2(17, 4)), Color("#5c8796"))
     elif kind == "Склад":
         canvas.draw_rect(Rect2(pos + Vector2(18, 3), Vector2(9, 6)), Color("#cda77b"))
+
+static func investment_level(snapshot: Dictionary, city: String, tile: Vector2i) -> int:
+    if city.is_empty():
+        return 0
+    var key := "%d:%d" % [floori(float(tile.x) / 16.0), floori(float(tile.y) / 16.0)]
+    for district_data in snapshot.get("district_demand", []):
+        if str(district_data.get("city", "")) == city and str(district_data.get("district", "")) == key:
+            return clampi(int(district_data.get("infrastructure", {}).get("investment_level", 0)), 0, 5)
+    return 0
+
+
+static func draw_investment(canvas: Node2D, pos: Vector2, tile: Vector2i, kind: String, level: int, budget: int) -> void:
+    # Purely decorative, deterministic and suppressed at far zoom.
+    if budget <= 0 or level <= 0:
+        return
+    if kind == "Свободный участок" and posmod(tile.x * 13 + tile.y * 7, 9) < level:
+        canvas.draw_circle(pos + Vector2(-20, 3), 5.0, Color("#4c9869"))
+        canvas.draw_circle(pos + Vector2(-17, -1), 3.0, Color("#81b980"))
+        if level >= 3 and budget >= 2:
+            canvas.draw_rect(Rect2(pos + Vector2(12, 0), Vector2(12, 3)), Color("#b9c4aa"))
+            canvas.draw_circle(pos + Vector2(17, -4), 2.0, Color("#ffe3a3"))
+    elif kind == "Дорога" and level >= 2 and posmod(tile.x + tile.y, 7) == 0:
+        canvas.draw_circle(pos + Vector2(27, -6), 2.0, Color("#f8d99a"))
+        if level >= 4 and budget >= 2:
+            canvas.draw_line(pos + Vector2(27, -6), pos + Vector2(27, -20), Color("#6b8580"), 1.5)
+            canvas.draw_circle(pos + Vector2(27, -21), 3.0, Color("#ffe6a5"))
