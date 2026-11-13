@@ -11,7 +11,8 @@ import json
 import re
 from . import land
 
-GOODS = ("grain", "bread", "milk")
+GOODS = ("grain", "bread", "milk", "flour")
+RECIPES = {"bread": ("grain", 1, "bread", 2), "flour": ("grain", 1, "flour", 2), "bakery": ("flour", 1, "bread", 3)}
 CITIES = ("ufa", "sterlitamak", "tuymazy", "beloretsk")
 TICK_SECONDS = 240
 TICKS_PER_DAY = 12
@@ -24,15 +25,15 @@ ROUTE_KM = {
     ("sterlitamak", "beloretsk"): 245,
     ("tuymazy", "beloretsk"): 410,
 }
-BASE_PRICES = {"grain": 5000, "bread": 15500, "milk": 18000}
+BASE_PRICES = {"grain": 5000, "bread": 15500, "milk": 18000, "flour": 10000}
 SOURCE_PRICES = {"grain": 5000, "milk": 11000}
 BUILD_COSTS = {"factory": 80000000, "shop": 35000000, "warehouse": 28000000, "mine": 70000000, "research_center": 60000000, "car_dealership": 50000000}
 CAPACITY = {"factory": 120, "shop": 90, "warehouse": 300, "mine": 120, "research_center": 80, "car_dealership": 90}
 DEMAND = {
-    "ufa": {"bread": 6, "milk": 3},
-    "sterlitamak": {"bread": 4, "milk": 2},
-    "tuymazy": {"bread": 3, "milk": 2},
-    "beloretsk": {"bread": 3, "milk": 1},
+    "ufa": {"bread": 6, "milk": 3, "flour": 2},
+    "sterlitamak": {"bread": 4, "milk": 2, "flour": 2},
+    "tuymazy": {"bread": 3, "milk": 2, "flour": 1},
+    "beloretsk": {"bread": 3, "milk": 1, "flour": 1},
 }
 SALES_TAX_BPS = 500
 STAFF_CAP = {"factory": 20, "shop": 12, "warehouse": 8, "mine": 16, "research_center": 12, "car_dealership": 10}
@@ -53,12 +54,13 @@ def _facility(owner: str, city: str, kind: str, ident: str,
         "id": ident, "owner": owner, "city": city, "kind": kind,
         "stock": {good: int((stock or {}).get(good, 0)) for good in GOODS},
         "basis": {good: 0 for good in GOODS}, "capacity": CAPACITY[kind],
-        "prices": {"bread": BASE_PRICES["bread"], "milk": BASE_PRICES["milk"]},
+        "prices": {good: BASE_PRICES[good] for good in ("bread", "milk", "flour")},
         "reputation": 70 if owner != "npc" else 60,
         "customer_distance_km": 3 if owner != "npc" else 7,
         "auto_buy_limit": 2 if kind == "factory" else 0,
         "workers": STAFF_BASE[kind], "wage_minor": WAGE_MINOR,
-        "production_target": 1, "production_last_tick": 0,
+        "production_target": 1, "recipe": "bread", "equipment_level": 1,
+        "production_last_tick": 0,
         "production_last_units": 0,
         "freight_priority": "standard",
     }
@@ -108,6 +110,21 @@ def new_world(epoch_unix: int = 1800000000) -> dict:
     w["initial_money"] = money_total(w)
     land.ensure_world(w)
     return w
+
+
+def migrate_industry(w: dict) -> None:
+    """In-memory additive migration of 0.7.7 saves; persisted on next atomic commit."""
+    if "flour" not in w["audit"]:
+        w["audit"]["flour"] = {"initial": 0, "sourced": 0,
+                                 "converted_in": 0, "converted_out": 0, "consumed": 0}
+    for fac in w["facilities"].values():
+        fac["stock"].setdefault("flour", 0)
+        fac["basis"].setdefault("flour", 0)
+        fac["prices"].setdefault("flour", BASE_PRICES["flour"])
+        fac.setdefault("recipe", "bread")
+        fac.setdefault("equipment_level", 1)
+    for city in CITIES:
+        w["suppliers"][city].setdefault("flour", 0)
 
 
 def register_company(w: dict, actor: str, city: str = "ufa") -> None:
@@ -201,6 +218,10 @@ def audit_world(w: dict) -> bool:
         staff = fac.get("workers", STAFF_BASE[fac["kind"]])
         wage = fac.get("wage_minor", WAGE_MINOR)
         target = fac.get("production_target", 1)
+        if (fac.get("recipe", "bread") not in RECIPES or
+                type(fac.get("equipment_level", 1)) is not int or
+                not 1 <= fac.get("equipment_level", 1) <= 3):
+            return False
         if (type(staff) is not int or not 0 <= staff <= STAFF_CAP[fac["kind"]] or
                 type(wage) is not int or not 500 <= wage <= 3000 or
                 type(target) is not int or not 0 <= target <= MAX_PRODUCTION_BATCH):
@@ -219,7 +240,7 @@ def _money(w: dict, payer: str, payee: str, amount: int, kind: str,
     if payer.startswith("company:"):
         owner = payer.split(":", 1)[1]
         metrics = w["company_metrics"][owner]
-        if kind in ("construction", "land.purchase"):
+        if kind in ("construction", "land.purchase", "equipment.purchase"):
             metrics["capital_expenditure"] += amount
         elif kind not in ("inventory.purchase",):
             metrics["operating_expense"] += amount
@@ -315,16 +336,19 @@ def _produce(w: dict) -> None:
         wage = fac.get("wage_minor", WAGE_MINOR)
         requested = fac.get("production_target", 1)
         # 4 workers per unit, capped by the player's target and physical stock.
+        equipment = fac.get("equipment_level", 1)
         units = min(MAX_PRODUCTION_BATCH, requested, workers // 4)
+        recipe = fac.get("recipe", "bread")
+        ingredient, input_qty, output_good, output_qty = RECIPES[recipe]
         fac["production_last_tick"] = w["tick"]
         fac["production_last_units"] = 0
         for _ in range(units):
-            if fac["stock"]["grain"] < 1:
+            if ingredient == "grain" and fac["stock"]["grain"] < input_qty:
                 _buy(w, fac, "grain", fac["auto_buy_limit"])
             wages = 4 * wage
-            energy = 1000
-            if (fac["stock"]["grain"] < 1 or
-                    sum(fac["stock"].values()) + 1 > fac["capacity"] or
+            energy = 1000 - 200 * (equipment - 1)
+            if (fac["stock"][ingredient] < input_qty or
+                    sum(fac["stock"].values()) - input_qty + output_qty > fac["capacity"] or
                     w["wallets"]["company:" + fac["owner"]] < wages + energy):
                 w["stats"]["blocked"] += 1
                 break
@@ -332,12 +356,12 @@ def _produce(w: dict) -> None:
                    wages, "wages", fac_id)
             _money(w, "company:" + fac["owner"], "suppliers:" + fac["city"],
                    energy, "energy", fac_id)
-            consumed_cost = _take(fac, "grain", 1)
-            _put(fac, "bread", 2, consumed_cost + wages + energy)
-            w["audit"]["grain"]["converted_in"] += 1
-            w["audit"]["bread"]["converted_out"] += 2
-            w["stats"]["produced"] += 2
-            fac["production_last_units"] += 2
+            consumed_cost = _take(fac, ingredient, input_qty)
+            _put(fac, output_good, output_qty, consumed_cost + wages + energy)
+            w["audit"][ingredient]["converted_in"] += input_qty
+            w["audit"][output_good]["converted_out"] += output_qty
+            w["stats"]["produced"] += output_qty
+            fac["production_last_units"] += output_qty
 
 
 def _local_restock(w: dict) -> None:
@@ -351,11 +375,12 @@ def _local_restock(w: dict) -> None:
                             and f["kind"] == "shop"), key=lambda f: f["id"])
             for shop in shops:
                 for factory in factories:
-                    count = min(2, factory["stock"]["bread"],
-                                shop["capacity"] - sum(shop["stock"].values()))
-                    if count > 0:
-                        basis = _take(factory, "bread", count)
-                        _put(shop, "bread", count, basis)
+                    for good in ("bread", "flour"):
+                        count = min(2, factory["stock"][good],
+                                    shop["capacity"] - sum(shop["stock"].values()))
+                        if count > 0:
+                            basis = _take(factory, good, count)
+                            _put(shop, good, count, basis)
 
 
 def _npc_reprice(w: dict) -> None:
@@ -363,7 +388,7 @@ def _npc_reprice(w: dict) -> None:
     for fac in w["facilities"].values():
         if fac["owner"] != "npc" or fac["kind"] != "shop":
             continue
-        for good in ("bread", "milk"):
+        for good in ("bread", "milk", "flour"):
             rivals = [other["prices"][good] for other in w["facilities"].values()
                       if other["city"] == fac["city"] and other["kind"] == "shop"
                       and other["owner"] != "npc" and other["stock"][good] > 0]
@@ -380,7 +405,7 @@ def _npc_reprice(w: dict) -> None:
 def _retail(w: dict) -> None:
     recent = {}
     for city in CITIES:
-        for good in ("bread", "milk"):
+        for good in ("bread", "milk", "flour"):
             shops = [fac for fac in w["facilities"].values()
                      if fac["kind"] == "shop" and fac["city"] == city
                      and fac["stock"][good] > 0]
@@ -489,7 +514,7 @@ def apply_command(w: dict, actor: str, command: dict) -> dict:
     if fac_id is not None and not isinstance(fac_id, str):
         raise EconomyError("invalid facility id")
     fac = w["facilities"].get(fac_id)
-    if kind in ("facility.set_price", "facility.buy", "shipment.create", "facility.set_staff", "facility.set_production"):
+    if kind in ("facility.set_price", "facility.buy", "shipment.create", "facility.set_staff", "facility.set_production", "facility.set_recipe", "facility.upgrade_equipment"):
         if fac is None or fac["owner"] != actor:
             raise EconomyError("facility not owned")
     if kind == "facility.set_staff":
@@ -507,10 +532,25 @@ def apply_command(w: dict, actor: str, command: dict) -> dict:
             raise EconomyError("invalid production target")
         fac["production_target"] = target
         result = {"ok": True, "target": target}
+    elif kind == "facility.set_recipe":
+        recipe = command.get("recipe")
+        if fac["kind"] != "factory" or type(recipe) is not str or recipe not in RECIPES:
+            raise EconomyError("invalid production recipe")
+        fac["recipe"] = recipe
+        result = {"ok": True, "recipe": recipe}
+    elif kind == "facility.upgrade_equipment":
+        level = fac.get("equipment_level", 1)
+        cost = level * 2_000_000
+        if fac["kind"] != "factory" or level >= 3 or w["wallets"]["company:" + actor] < cost:
+            raise EconomyError("equipment upgrade unavailable")
+        _money(w, "company:" + actor, "suppliers:" + fac["city"], cost,
+               "equipment.purchase", fac_id)
+        fac["equipment_level"] = level + 1
+        result = {"ok": True, "equipment_level": level + 1, "cost_minor": cost}
     elif kind == "facility.set_price":
         good = command.get("good")
         price = command.get("price_minor")
-        if (fac["kind"] != "shop" or not isinstance(good, str) or good not in ("bread", "milk") or
+        if (fac["kind"] != "shop" or not isinstance(good, str) or good not in ("bread", "milk", "flour") or
                 type(price) is not int or
                 not BASE_PRICES[good] * 7 // 10 <= price <= BASE_PRICES[good] * 3 // 2):
             raise EconomyError("invalid offer")
@@ -659,4 +699,7 @@ def snapshot(w: dict, actor: str) -> dict:
             if entry["debit"] == "company:" + actor or entry["credit"] == "company:" + actor
         ],
         "staff_limits": STAFF_CAP.copy(),
+        "recipes": {name: {"input": data[0], "input_qty": data[1],
+                            "output": data[2], "output_qty": data[3]}
+                    for name, data in RECIPES.items()},
     }
