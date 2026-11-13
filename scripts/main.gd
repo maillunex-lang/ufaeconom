@@ -1,5 +1,5 @@
 extends Node2D
-## Offline prototype 0.2: deterministic cities and layered procedural isometric art.
+## Offline prototype 0.4: deterministic isometric city and daily stock-flow economy.
 const CityGenerator = preload("res://scripts/city_generator.gd")
 const CompanyState = preload("res://scripts/company_state.gd")
 const TILE_W := 96.0
@@ -15,6 +15,9 @@ const COLORS := {
 
 var company = CompanyState.new()
 var money_label: Label
+var economy_label: Label
+var day_timer: Timer
+var pause_button: Button
 var actions: VBoxContainer
 var message_label: Label
 var camera: Camera2D
@@ -38,6 +41,11 @@ func _ready() -> void:
 	_build_ui()
 	company.load_game()
 	_load_city(company.city_index)
+	day_timer = Timer.new()
+	day_timer.wait_time = 15.0
+	day_timer.timeout.connect(_advance_day)
+	add_child(day_timer)
+	day_timer.start()
 
 func _load_city(index: int) -> void:
 	city_index = posmod(index, CityGenerator.CITIES.size())
@@ -48,6 +56,7 @@ func _load_city(index: int) -> void:
 	company.save_game()
 	city_label.text = "Город: %s (демонстрация)" % data["name"]
 	info.text = "Нажмите на участок или здание"
+	message_label.text = ""
 	_update_actions()
 	camera.position = Vector2(0, 700)
 	queue_redraw()
@@ -62,7 +71,7 @@ func _build_ui() -> void:
 	var content := VBoxContainer.new()
 	panel.add_child(content)
 	var title := Label.new()
-	title.text = "BUSINESS EMPIRE ONLINE • 0.3"
+	title.text = "BUSINESS EMPIRE ONLINE • 0.4"
 	content.add_child(title)
 	city_label = Label.new()
 	content.add_child(city_label)
@@ -82,6 +91,26 @@ func _build_ui() -> void:
 	var help := Label.new()
 	help.text = "Карта: перетаскивание • Масштаб: щипок / колесо"
 	content.add_child(help)
+	var market_panel := PanelContainer.new()
+	market_panel.position = Vector2(810, 16)
+	market_panel.custom_minimum_size = Vector2(455, 250)
+	layer.add_child(market_panel)
+	var market_content := VBoxContainer.new()
+	market_panel.add_child(market_content)
+	var market_title := Label.new()
+	market_title.text = "ЭКОНОМИКА ХОЛДИНГА • ПРОТОТИП"
+	market_content.add_child(market_title)
+	economy_label = Label.new()
+	economy_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	market_content.add_child(economy_label)
+	var day_button := Button.new()
+	day_button.text = "▶ Следующий игровой день"
+	day_button.pressed.connect(_advance_day)
+	market_content.add_child(day_button)
+	pause_button = Button.new()
+	pause_button.text = "⏸ Приостановить время"
+	pause_button.pressed.connect(_toggle_timer)
+	market_content.add_child(pause_button)
 
 func _iso(tile: Vector2) -> Vector2:
 	return Vector2((tile.x - tile.y) * TILE_W * 0.5, (tile.x + tile.y) * TILE_H * 0.5)
@@ -208,7 +237,8 @@ func _select_at(screen_position: Vector2) -> void:
 func _update_actions() -> void:
 	if money_label == null or actions == null:
 		return
-	money_label.text = "Компания: Мой холдинг | Баланс: %d ₽ | Участков: %d" % [company.cash, company.owned.size()]
+	money_label.text = "Мой холдинг | %d ₽ | Участков: %d" % [company.cash, company.owned.size()]
+	_refresh_economy_ui()
 	for child in actions.get_children():
 		actions.remove_child(child)
 		child.queue_free()
@@ -241,3 +271,37 @@ func _construct(kind: String) -> void:
 	message_label.text = company.construct(city_index, selected, kind)
 	_update_actions()
 	queue_redraw()
+
+func _advance_day() -> void:
+	var report: Dictionary = company.advance_day()
+	var cashflow: int = int(report.get("cashflow", 0))
+	message_label.text = "День %d: выручка %d ₽, расходы %d ₽, денежный результат %+d ₽" % [
+		int(report["day"]), int(report["revenue"]), int(report["expenses"]), cashflow
+	]
+	_update_actions()
+	queue_redraw()
+
+func _toggle_timer() -> void:
+	day_timer.paused = not day_timer.paused
+	pause_button.text = "▶ Возобновить время" if day_timer.paused else "⏸ Приостановить время"
+
+func _refresh_economy_ui() -> void:
+	if economy_label == null:
+		return
+	var city_market: Dictionary = company.market(city_index)
+	var stock: Dictionary = city_market["stock"]
+	var daily: Dictionary = company.last_report.get("cities", {}).get(str(city_index), {})
+	var realized: int = int(daily.get("revenue", 0)) - int(daily.get("expenses", 0))
+	var city_name: String = CityGenerator.CITIES[city_index]["name"]
+	economy_label.text = (
+		"%s • День %d (авто: 15 секунд)\n" % [city_name, company.day] +
+		"Запасы: зерно %d • хлеб %d • молоко %d\n" % [int(stock["Зерно"]), int(stock["Хлеб"]), int(stock["Молоко"])] +
+		"Склад: %d / %d ед.\n" % [CompanyState.Economy.stock_total(city_market), company.storage_capacity(city_index)] +
+		"Спрос жителей: хлеб %d • молоко %d ед./день\n" % [int(daily.get("bread_demand", 0)), int(daily.get("milk_demand", 0))] +
+		"Продано: хлеб %d • молоко %d\n" % [int(daily.get("sold_bread", 0)), int(daily.get("sold_milk", 0))] +
+		"Выручка: %d ₽ | Расходы: %d ₽\n" % [int(daily.get("revenue", 0)), int(daily.get("expenses", 0))] +
+		"Денежный результат: %+d ₽\n" % realized +
+		"Бюджет покупателей: %d ₽\n" % int(city_market["residents_cash"]) +
+		"Цены: хлеб 155 ₽, молоко 180 ₽\n" +
+		"Расчётный баланс, не реальные рыночные цены."
+	)
