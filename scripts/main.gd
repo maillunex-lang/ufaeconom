@@ -44,6 +44,15 @@ var previous_pinch_distance := 0.0
 var dragging := false
 var moved_since_press := false
 var last_mouse := Vector2.ZERO
+var touch_origin := Vector2.ZERO
+var touch_start_msec := 0
+var last_tap_msec := -10000
+var last_tap_position := Vector2.ZERO
+var pinch_center := Vector2.ZERO
+var pending_zoom_anchor := Vector2.ZERO
+var zoom_anchor_valid := false
+const TAP_DRAG_THRESHOLD := 12.0
+const DOUBLE_TAP_INTERVAL_MS := 320
 var info: Label
 var city_label: Label
 var mmo_panel
@@ -95,7 +104,7 @@ func _ready() -> void:
 	add_child(debug_layer)
 	camera_debug = Label.new()
 	camera_debug.name = "FPSLabel"
-	camera_debug.position = Vector2(12, 12)
+	camera_debug.position = Vector2(12, 76)
 	camera_debug.add_theme_color_override("font_color", Color("#ffffff"))
 	camera_debug.add_theme_color_override("font_shadow_color", Color("#20382c"))
 	camera_debug.add_theme_constant_override("shadow_offset_x", 1)
@@ -296,35 +305,42 @@ func _unhandled_input(event: InputEvent) -> void:
 			touches[event.index] = event.position
 			if touches.size() == 1:
 				moved_since_press = false
+				touch_origin = event.position
+				touch_start_msec = Time.get_ticks_msec()
+			else:
+				moved_since_press = true
+				previous_pinch_distance = 0.0
 		else:
-			if touches.size() == 1 and not moved_since_press:
-				_select_at(event.position)
+			if touches.size() == 1 and not moved_since_press and event.position.distance_to(touch_origin) < TAP_DRAG_THRESHOLD:
+				_handle_tap(event.position)
 			touches.erase(event.index)
 			previous_pinch_distance = 0.0
 	elif event is InputEventScreenDrag:
 		touches[event.index] = event.position
-		moved_since_press = true
-		if touches.size() == 1:
+		if event.position.distance_to(touch_origin) > TAP_DRAG_THRESHOLD or touches.size() > 1:
+			moved_since_press = true
+		if touches.size() == 1 and moved_since_press:
 			camera.position -= event.relative / camera.zoom
 			_clamp_camera()
 		elif touches.size() == 2:
 			var values := touches.values()
 			var distance: float = (values[0] as Vector2).distance_to(values[1] as Vector2)
 			if previous_pinch_distance > 0.0:
-				_set_zoom(target_zoom * distance / previous_pinch_distance)
+				_set_zoom_at(target_zoom * distance / previous_pinch_distance,
+					((values[0] as Vector2) + (values[1] as Vector2)) * 0.5)
 			previous_pinch_distance = distance
 	elif event is InputEventMouseButton:
 		if event.button_index == MOUSE_BUTTON_WHEEL_UP and event.pressed:
-			_set_zoom(target_zoom * 1.12)
+			_set_zoom_at(target_zoom * 1.12, event.position)
 		elif event.button_index == MOUSE_BUTTON_WHEEL_DOWN and event.pressed:
-			_set_zoom(target_zoom / 1.12)
+			_set_zoom_at(target_zoom / 1.12, event.position)
 		elif event.button_index == MOUSE_BUTTON_LEFT:
 			dragging = event.pressed
 			last_mouse = event.position
 			if event.pressed:
 				moved_since_press = false
 			elif not moved_since_press:
-				_select_at(event.position)
+				_handle_tap(event.position)
 	elif event is InputEventMouseMotion and dragging:
 		if event.position.distance_to(last_mouse) > 2.0:
 			moved_since_press = true
@@ -335,6 +351,35 @@ func _unhandled_input(event: InputEvent) -> void:
 
 func _set_zoom(value: float) -> void:
 	target_zoom = clampf(value, CAMERA_MIN_ZOOM, CAMERA_MAX_ZOOM)
+
+
+func _set_zoom_at(value: float, screen_position: Vector2) -> void:
+	var old := target_zoom
+	_set_zoom(value)
+	if not is_equal_approx(old, target_zoom):
+		pending_zoom_anchor = screen_position
+		zoom_anchor_valid = true
+
+
+func _handle_tap(screen_position: Vector2) -> void:
+	var now := Time.get_ticks_msec()
+	if now - last_tap_msec <= DOUBLE_TAP_INTERVAL_MS and screen_position.distance_to(last_tap_position) <= 36.0:
+		var world := get_canvas_transform().affine_inverse() * screen_position
+		camera.position = world
+		_clamp_camera()
+		last_tap_msec = -10000
+	else:
+		_select_at(screen_position)
+		last_tap_msec = now
+		last_tap_position = screen_position
+
+
+func _center_city() -> void:
+	var bounds := _city_world_bounds()
+	camera.position = bounds.get_center()
+	_clamp_camera()
+	_set_zoom(0.8)
+	queue_redraw()
 
 
 func _city_world_bounds() -> Rect2:
@@ -380,8 +425,14 @@ func _process(delta: float) -> void:
 	if absf(next - target_zoom) < 0.001:
 		next = target_zoom
 	if absf(previous - next) > 0.0001:
+		var before := get_canvas_transform().affine_inverse() * pending_zoom_anchor if zoom_anchor_valid else Vector2.ZERO
 		camera.zoom = Vector2(next, next)
+		if zoom_anchor_valid:
+			var after := get_canvas_transform().affine_inverse() * pending_zoom_anchor
+			camera.position += before - after
 		_clamp_camera()
+		if is_equal_approx(next, target_zoom):
+			zoom_anchor_valid = false
 		queue_redraw()
 	if camera_debug != null:
 		camera_debug.text = "FPS %d  |  %.1f ms  |  x%.2f  |  LOD %s" % [
