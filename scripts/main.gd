@@ -19,6 +19,7 @@ const CityBackground = preload("res://scripts/city_background_0870.gd")
 const CityProfiler = preload("res://scripts/city_profiler_08346.gd")
 const ChunkBudget = preload("res://scripts/chunk_budget_08356.gd")
 const AdaptiveChunkBudget = preload("res://scripts/adaptive_chunk_budget_08358.gd")
+const ChunkQueueWatchdog = preload("res://scripts/chunk_queue_watchdog_08359.gd")
 const TILE_W := 96.0
 const TILE_H := 48.0
 const MAP_SIZE := 32
@@ -66,6 +67,8 @@ var adaptive_chunk_frame := 0
 var adaptive_chunk_fps := 60.0
 var adaptive_chunk_sample_frames := 0
 var adaptive_chunk_sample_time := 0.0
+var pending_chunk_wait_seconds := 0.0
+var chunk_watchdog_rescues := 0
 # Cache only deterministic city layouts, never player-owned plots or economy state.
 const CITY_LAYOUT_CACHE_LIMIT := 2
 var city_layout_cache: Dictionary = {}
@@ -87,6 +90,7 @@ func _clear_chunk_canvases() -> void:
 	adaptive_chunk_capacity = 2
 	adaptive_chunk_sample_frames = 0
 	adaptive_chunk_sample_time = 0.0
+	pending_chunk_wait_seconds = 0.0
 	for node in static_chunk_nodes.values():
 		node.queue_free()
 	static_chunk_nodes.clear()
@@ -135,8 +139,12 @@ func _sync_chunk_canvases() -> void:
 func _build_pending_chunks() -> void:
 	if pending_chunk_coords.is_empty():
 		return
-	var permitted := AdaptiveChunkBudget.frame_budget(adaptive_chunk_fps, adaptive_chunk_capacity, adaptive_chunk_frame)
+	var permitted := ChunkQueueWatchdog.allowed(adaptive_chunk_fps, adaptive_chunk_capacity, adaptive_chunk_frame, pending_chunk_wait_seconds)
 	var count := mini(CHUNKS_PER_FRAME, mini(permitted, pending_chunk_coords.size()))
+	if count > 0:
+		if pending_chunk_wait_seconds >= ChunkQueueWatchdog.MAX_WAIT_SECONDS:
+			chunk_watchdog_rescues += 1
+		pending_chunk_wait_seconds = 0.0
 	for i in range(count):
 		var coords: Vector2i = pending_chunk_coords.pop_front()
 		var key := "%d:%d" % [coords.x, coords.y]
@@ -638,6 +646,10 @@ func _process(delta: float) -> void:
 		adaptive_chunk_capacity = AdaptiveChunkBudget.capacity(adaptive_chunk_fps, adaptive_chunk_capacity)
 		adaptive_chunk_sample_frames = 0
 		adaptive_chunk_sample_time = 0.0
+	if not pending_chunk_coords.is_empty():
+		pending_chunk_wait_seconds += maxf(delta, 0.0)
+	else:
+		pending_chunk_wait_seconds = 0.0
 	chunk_sync_elapsed += delta
 	# Update immediately when the camera enters a new tile range, zoom changes,
 	# or Android quality switches. Avoid blank terrain while panning quickly.
