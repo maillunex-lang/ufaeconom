@@ -298,6 +298,25 @@ def _local_restock(w: dict) -> None:
                         _put(shop, "bread", count, basis)
 
 
+def _npc_reprice(w: dict) -> None:
+    """Bounded 1%-per-day NPC responses to other shops' *public* prices."""
+    for fac in w["facilities"].values():
+        if fac["owner"] != "npc" or fac["kind"] != "shop":
+            continue
+        for good in ("bread", "milk"):
+            rivals = [other["prices"][good] for other in w["facilities"].values()
+                      if other["city"] == fac["city"] and other["kind"] == "shop"
+                      and other["owner"] != "npc" and other["stock"][good] > 0]
+            if not rivals:
+                continue
+            old = fac["prices"][good]
+            desired = min(rivals) - 100
+            maximum_delta = max(1, old // 100)
+            next_price = old + max(-maximum_delta, min(maximum_delta, desired - old))
+            fac["prices"][good] = max(BASE_PRICES[good] * 7 // 10,
+                                     min(BASE_PRICES[good] * 3 // 2, next_price))
+
+
 def _retail(w: dict) -> None:
     recent = {}
     for city in CITIES:
@@ -365,6 +384,8 @@ def advance(w: dict, ticks: int = 1) -> None:
         _deliver(w)
         _produce(w)
         _local_restock(w)
+        if w["tick"] % TICKS_PER_DAY == 0:
+            _npc_reprice(w)
         _retail(w)
         if w["tick"] % TICKS_PER_MONTH == 0:
             _close_month(w)
