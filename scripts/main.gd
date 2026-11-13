@@ -71,6 +71,7 @@ var visible_render_buildings := 0
 var chunk_sync_elapsed := 0.0
 var chunk_sync_requested := true
 var last_chunk_camera_position := Vector2.INF
+var camera_priority_motion := Vector2.ZERO
 var last_chunk_camera_zoom := -1.0
 var last_chunk_quality := -1
 var last_chunk_visible := Rect2i()
@@ -83,6 +84,7 @@ func _clear_chunk_canvases() -> void:
 	chunk_sync_requested = true
 	last_chunk_visible = Rect2i()
 	last_chunk_camera_position = Vector2.INF
+	camera_priority_motion = Vector2.ZERO
 
 func _sync_chunk_canvases() -> void:
 	if camera == null:
@@ -117,7 +119,7 @@ func _sync_chunk_canvases() -> void:
 			static_chunk_nodes[key].queue_free()
 			static_chunk_nodes.erase(key)
 	# Replace outdated requests after camera movement or city switching.
-	pending_chunk_coords = ChunkBudget.nearest_first(missing, camera.position, TILE_W, TILE_H)
+	pending_chunk_coords = ChunkBudget.nearest_first(missing, camera.position, TILE_W, TILE_H, camera_priority_motion)
 	pending_chunk_budget = budget
 	pending_chunk_zoom = camera.zoom.x
 
@@ -610,6 +612,12 @@ func _process(delta: float) -> void:
 		return
 	# Damp leftover gesture movement without moving the camera after release.
 	drag_velocity = drag_velocity.lerp(Vector2.ZERO, 1.0 - exp(-CAMERA_DRAG_DAMPING * maxf(delta, 0.0)))
+	# Use displacement since last sync, not just the previous frame.
+	# This survives throttled synchronization without accumulating old movement.
+	if last_chunk_camera_position.is_finite():
+		camera_priority_motion = (camera.position - last_chunk_camera_position).limit_length(360.0)
+	else:
+		camera_priority_motion = Vector2.ZERO
 	chunk_sync_elapsed += delta
 	# Update immediately when the camera enters a new tile range, zoom changes,
 	# or Android quality switches. Avoid blank terrain while panning quickly.
