@@ -554,6 +554,36 @@ def _district_infrastructure(w: dict, city: str, district: tuple[int, int]) -> d
             "industry": industry, "jobs": jobs, "attractiveness": score}
 
 
+def _district_urban_metrics(w: dict, city: str, district: tuple[int, int],
+                            infrastructure: dict | None = None) -> dict:
+    """Read-only integer planning indicators; no new taxes or land transactions."""
+    infra = infrastructure if infrastructure is not None else _district_infrastructure(w, city, district)
+    residents = _district_population(city, district, w)
+    roads = infra["roads"]
+    workers = infra["jobs"]
+    shops = infra["services"]
+    industry = infra["industry"]
+    # 0..100: synthetic accessibility and congestion proxies, not live routing.
+    access = max(0, min(100, 25 + roads // 2 + infra["investment_level"] * 6
+                        - (abs(district[0]) + abs(district[1])) * 5))
+    congestion = max(0, min(100, (residents // 40 + workers * 2 + shops * 5 +
+                                  industry * 8) * 10 // max(10, roads + 10)))
+    land_value_minor = land.LAND_PRICE * (
+        100 + infra["attractiveness"] // 2 + access // 3
+        - congestion // 5) // 100
+    if industry >= shops + 2:
+        specialization = "industrial"
+    elif shops >= industry + 2:
+        specialization = "commercial"
+    elif infra["housing_tiles"] >= 15:
+        specialization = "residential"
+    else:
+        specialization = "mixed"
+    return {"transport_access": access, "traffic_congestion": congestion,
+            "indicative_land_value_minor": max(land.LAND_PRICE // 2, land_value_minor),
+            "specialization": specialization}
+
+
 def _update_district_population(w: dict) -> None:
     """Monthly bounded migration based on nearby jobs and local infrastructure."""
     populations = w.setdefault("district_population", {})
@@ -590,16 +620,21 @@ def _allocate_district_demand(total: int, weights: dict[tuple[int, int], int]) -
     return allocations
 
 
-def _district_shop_rank(fac: dict, district: tuple[int, int], good: str) -> tuple:
+def _district_shop_rank(fac: dict, district: tuple[int, int], good: str, urban: dict | None = None) -> tuple:
     plot = fac.get("plot") or {"x": 0, "y": 0}
     distance = abs(int(plot["x"]) // 16 - district[0]) + abs(int(plot["y"]) // 16 - district[1])
     # Distance affects effective price; a cheaper shop can still win remotely.
-    effective_price = int(fac["prices"][good]) * (100 + distance * 8)
+    transport_penalty = 0
+    if urban is not None:
+        # Congestion makes distant shopping less attractive; better access reduces friction.
+        transport_penalty = distance * max(0, urban["traffic_congestion"] - urban["transport_access"]) // 10
+    effective_price = int(fac["prices"][good]) * (100 + distance * 8 + transport_penalty)
     return (effective_price, int(fac["customer_distance_km"]), -int(fac["reputation"]), fac["id"])
 
 
 def _retail(w: dict) -> None:
     recent = {}
+    urban_cache = {}
     for city in CITIES:
         for good in ("bread", "milk", "flour"):
             shops = [fac for fac in w["facilities"].values()
@@ -614,7 +649,11 @@ def _retail(w: dict) -> None:
             allocations = _allocate_district_demand(demand, weights)
             affordable = w["wallets"]["residents:" + city]
             for district, district_demand in allocations.items():
-                for fac in sorted(shops, key=lambda f: _district_shop_rank(f, district, good)):
+                cache_key = (city, district)
+                if cache_key not in urban_cache:
+                    urban_cache[cache_key] = _district_urban_metrics(w, city, district)
+                urban = urban_cache[cache_key]
+                for fac in sorted(shops, key=lambda f: _district_shop_rank(f, district, good, urban)):
                     price = fac["prices"][good]
                     qty = min(district_demand, fac["stock"][good], affordable // price)
                     if qty <= 0:
@@ -1423,6 +1462,8 @@ def district_demand(w: dict, actor: str) -> list[dict]:
                            "synthetic_population": _district_population(
                                city, tuple(map(int, district.split(":"))), w),
                            "infrastructure": _district_infrastructure(
+                               w, city, tuple(map(int, district.split(":")))),
+                           "urban_metrics": _district_urban_metrics(
                                w, city, tuple(map(int, district.split(":")))),
                            "residential_tier": min(5, _district_population(
                                city, tuple(map(int, district.split(":"))), w) // 750),

@@ -123,3 +123,24 @@ static func draw_neighborhood_amenities(canvas: Node2D, pos: Vector2, tile: Vect
     if kind == "Дорога" and tier >= 4 and posmod(tile.x * 7 + tile.y, 11) == 0:
         canvas.draw_line(pos + Vector2(-26, 1), pos + Vector2(-26, -17), Color("#87958c"), 2.0)
         canvas.draw_circle(pos + Vector2(-26, -18), 3.0, Color("#ffdfa4"))
+
+static func urban_overlay_color(metrics: Dictionary) -> Color:
+    var access := clampi(int(metrics.get("transport_access", 0)), 0, 100)
+    var congestion := clampi(int(metrics.get("traffic_congestion", 0)), 0, 100)
+    if congestion >= 65:
+        return Color(0.85, 0.30, 0.22, 0.22)
+    if access >= 60:
+        return Color(0.20, 0.68, 0.48, 0.16)
+    return Color(0.90, 0.72, 0.26, 0.13)
+
+
+static func draw_urban_overlay(canvas: Node2D, pos: Vector2, tile: Vector2i, metrics: Dictionary, budget: int) -> void:
+    if budget <= 0 or metrics.is_empty():
+        return
+    # Sparse heatmap markers: avoids filling the city with UI colors.
+    if posmod(tile.x, 4) != 0 or posmod(tile.y, 4) != 0:
+        return
+    canvas.draw_colored_polygon(PackedVector2Array([
+        pos + Vector2(0, -9), pos + Vector2(16, 0),
+        pos + Vector2(0, 9), pos + Vector2(-16, 0)
+    ]), urban_overlay_color(metrics))
