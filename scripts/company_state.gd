@@ -19,7 +19,7 @@ var city_index: int = 0
 var day: int = 0
 var markets: Dictionary = {}
 var last_report: Dictionary = {}
-var totals: Dictionary = {"revenue": 0, "expenses": 0, "cashflow": 0, "capital_expenditure": 0}
+var totals: Dictionary = {"revenue": 0, "expenses": 0, "cashflow": 0, "profit": 0, "capital_expenditure": 0}
 
 func reset() -> void:
 	cash = START_CASH
@@ -28,7 +28,7 @@ func reset() -> void:
 	day = 0
 	markets.clear()
 	last_report.clear()
-	totals = {"revenue": 0, "expenses": 0, "cashflow": 0, "capital_expenditure": 0}
+	totals = {"revenue": 0, "expenses": 0, "cashflow": 0, "profit": 0, "capital_expenditure": 0}
 
 func key(city: int, tile: Vector2i) -> String:
 	return "%d:%d:%d" % [city, tile.x, tile.y]
@@ -147,7 +147,7 @@ func load_game() -> bool:
 			return false
 		new_owned[id] = {"city": city, "x": x, "y": y, "building": building}
 	var new_markets: Dictionary = {}
-	var new_totals: Dictionary = {"revenue": 0, "expenses": 0, "cashflow": 0, "capital_expenditure": 0}
+	var new_totals: Dictionary = {"revenue": 0, "expenses": 0, "cashflow": 0, "profit": 0, "capital_expenditure": 0}
 	var new_report: Dictionary = {}
 	if version == 2:
 		var market_data: Variant = parsed.get("markets", {})
@@ -168,7 +168,16 @@ func load_game() -> bool:
 				if count < 0:
 					return false
 				stock[good] = count
-			var wallets: Dictionary = {"stock": stock}
+			var stored_costs: Variant = input_market.get("inventory_cost", {})
+			if not (stored_costs is Dictionary):
+				return false
+			var inventory_cost: Dictionary = {}
+			for good in Economy.GOODS:
+				var amount := int(stored_costs.get(good, 0))
+				if amount < 0:
+					return false
+				inventory_cost[good] = amount
+			var wallets: Dictionary = {"stock": stock, "inventory_cost": inventory_cost}
 			for name in ["residents_cash", "supplier_cash", "city_budget"]:
 				var amount := int(input_market.get(name, -1))
 				if amount < 0:
