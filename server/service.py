@@ -104,13 +104,22 @@ class WorldStore:
         # Privileged local CLI only. No public registration endpoint.
         if not _USER_RE.fullmatch(username) or len(password) < 12 or len(password) > 256:
             raise ValueError("username or password fails policy")
-        if actor not in ("player", "rival"):
-            raise ValueError("only normal player roles may log in")
+        if (not isinstance(actor, str) or
+                re.fullmatch(r"[a-z][a-z0-9_-]{2,24}", actor) is None or
+                actor == "npc"):
+            raise ValueError("invalid player company ID")
         salt = secrets.token_bytes(16)
         digest = self._hash_password(password, salt)
         with self.lock:
-            self.db.execute("INSERT INTO accounts VALUES(?,?,?,?,?)",
-                            (username, actor, salt, digest, int(time.time())))
+            account_row = (username, actor, salt, digest, int(time.time()))
+            if "company:" + actor in self.world["wallets"]:
+                self.db.execute("INSERT INTO accounts VALUES(?,?,?,?,?)", account_row)
+                return
+            candidate = economy.copy_world(self.world)
+            economy.register_company(candidate, actor)
+            self._save_world(candidate, lambda db: db.execute(
+                "INSERT INTO accounts VALUES(?,?,?,?,?)", account_row))
+            self.world = candidate
 
     def login(self, username: str, password: str) -> tuple[str, str]:
         if not isinstance(username, str) or not isinstance(password, str):
@@ -153,7 +162,7 @@ class WorldStore:
         with self.lock:
             self.db.execute("DELETE FROM sessions WHERE token_digest=?", (digest,))
 
-    def _save_world(self, candidate: dict) -> None:
+    def _save_world(self, candidate: dict, extra_write=None) -> None:
         if not economy.audit_world(candidate):
             raise RuntimeError("economy invariant failed; refusing commit")
         payload = economy.copy_world(candidate)
@@ -176,6 +185,8 @@ class WorldStore:
                     [(e["tick"], e["debit"], e["credit"], e["amount"],
                       e["kind"], e["ref"]) for e in receipts],
                 )
+            if extra_write is not None:
+                extra_write(self.db)
             self.db.execute("COMMIT")
         except Exception:
             self.db.execute("ROLLBACK")
@@ -420,7 +431,7 @@ def main() -> None:
             cmd.add_argument("--port", type=int, default=4189)
         elif name == "create-user":
             cmd.add_argument("--username", required=True)
-            cmd.add_argument("--actor", choices=("player", "rival"), required=True)
+            cmd.add_argument("--actor", required=True)
         elif name == "backup":
             cmd.add_argument("--output", required=True)
     args = parser.parse_args()
