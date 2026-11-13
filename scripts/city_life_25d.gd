@@ -26,6 +26,8 @@ func _iso(p: Vector2) -> Vector2:
 func _draw() -> void:
     if city.camera == null:
         return
+    if city.camera.zoom.x < 0.72:
+        return
     var rect: Rect2i = city._visible_tile_rect()
     var chunks: Array = city._active_chunks()
     var open: Dictionary = {}
