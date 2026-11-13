@@ -39,6 +39,33 @@ var camera: Camera2D
 var selected := Vector2i(-1, -1)
 var city_index := 0
 var cells: Dictionary = {}
+# Static terrain metadata cache; dynamic plots, ownership and MMO overlays are never cached.
+const TERRAIN_CACHE_LIMIT := 8192
+var terrain_cache: Dictionary = {}
+var terrain_cache_hits := 0
+var terrain_cache_misses := 0
+
+func _static_tile_data(tile: Vector2i) -> Dictionary:
+	if terrain_cache.has(tile):
+		terrain_cache_hits += 1
+		return terrain_cache[tile]
+	terrain_cache_misses += 1
+	var kind: String = Land.kind_at(city_index, tile)
+	var data := {
+		"kind": kind,
+		"tint": CityDetail075.terrain_tint(tile, kind),
+		"ore": kind == "Свободный участок" and Land.has_ore(city_index, tile)
+	}
+	if terrain_cache.size() >= TERRAIN_CACHE_LIMIT:
+		terrain_cache.clear()
+	terrain_cache[tile] = data
+	return data
+
+func _clear_terrain_cache() -> void:
+	terrain_cache.clear()
+	terrain_cache_hits = 0
+	terrain_cache_misses = 0
+
 var touches: Dictionary = {}
 var previous_pinch_distance := 0.0
 var dragging := false
@@ -128,6 +155,7 @@ func _ready() -> void:
 
 func _load_city(index: int) -> void:
 	city_index = posmod(index, CityGenerator.CITIES.size())
+	_clear_terrain_cache()
 	var data: Dictionary = CityGenerator.make_city(city_index)
 	cells = data["cells"]
 	selected = Vector2i(-1, -1)
@@ -260,9 +288,10 @@ func _draw() -> void:
 			if not opened.has(Land.chunk_key(tile)):
 				continue
 			var pos := _iso(Vector2(tile))
-			var kind: String = Land.kind_at(city_index, tile)
+			var static_data := _static_tile_data(tile)
+			var kind: String = static_data["kind"]
 			var road := kind == "Дорога"
-			var base := CityDetail075.terrain_tint(tile, kind)
+			var base: Color = static_data["tint"]
 			var diamond := PackedVector2Array([
 				pos + Vector2(0, -TILE_H * 0.5),
 				pos + Vector2(TILE_W * 0.5, 0),
@@ -286,7 +315,7 @@ func _draw() -> void:
 					_draw_building(pos, kind, tile)
 				else:
 					draw_rect(Rect2(pos + Vector2(-11, -17), Vector2(22, 22)), COLORS[kind])
-			if not far_lod and kind == "Свободный участок" and Land.has_ore(city_index, tile):
+			if not far_lod and bool(static_data["ore"]):
 				draw_circle(pos, 5.0, Color("#c28147"))
 			if not far_lod and not invested_levels.is_empty():
 				var district_key := "%d:%d" % [floori(float(x) / 16.0), floori(float(y) / 16.0)]
