@@ -35,6 +35,11 @@ DEMAND = {
     "beloretsk": {"bread": 3, "milk": 1},
 }
 SALES_TAX_BPS = 500
+STAFF_CAP = {"factory": 20, "shop": 12, "warehouse": 8, "mine": 16, "research_center": 12, "car_dealership": 10}
+STAFF_BASE = {"factory": 4, "shop": 3, "warehouse": 2, "mine": 4, "research_center": 3, "car_dealership": 3}
+WAGE_MINOR = 750
+MAX_PRODUCTION_BATCH = 4
+
 TRANSPORT_CAPACITY = 50
 
 
@@ -52,6 +57,10 @@ def _facility(owner: str, city: str, kind: str, ident: str,
         "reputation": 70 if owner != "npc" else 60,
         "customer_distance_km": 3 if owner != "npc" else 7,
         "auto_buy_limit": 2 if kind == "factory" else 0,
+        "workers": STAFF_BASE[kind], "wage_minor": WAGE_MINOR,
+        "production_target": 1, "production_last_tick": 0,
+        "production_last_units": 0,
+        "freight_priority": "standard",
     }
 
 
@@ -85,7 +94,7 @@ def new_world(epoch_unix: int = 1800000000) -> dict:
         "schema": 1, "epoch_unix": epoch_unix, "tick": 0, "revision": 0,
         "wallets": wallets, "suppliers": suppliers, "facilities": facilities,
         "shipments": [], "next_shipment": 1, "next_facility": 1,
-        "receipts": {}, "audit": audit, "pending_ledger": [],
+        "receipts": {}, "audit": audit, "pending_ledger": [], "finance_history": [],
         "stats": {"sales": 0, "units_sold": 0, "delivered": 0,
                   "produced": 0, "blocked": 0, "days_closed": 0},
         "last_sales": {}, "month_reports": [],
@@ -188,6 +197,14 @@ def audit_world(w: dict) -> bool:
                     - a["converted_in"] - a["consumed"])
         if stock[good] != expected:
             return False
+    for fac in w["facilities"].values():
+        staff = fac.get("workers", STAFF_BASE[fac["kind"]])
+        wage = fac.get("wage_minor", WAGE_MINOR)
+        target = fac.get("production_target", 1)
+        if (type(staff) is not int or not 0 <= staff <= STAFF_CAP[fac["kind"]] or
+                type(wage) is not int or not 500 <= wage <= 3000 or
+                type(target) is not int or not 0 <= target <= MAX_PRODUCTION_BATCH):
+            return False
     return land.audit(w)
 
 
@@ -213,10 +230,13 @@ def _money(w: dict, payer: str, payee: str, amount: int, kind: str,
         metrics = w["company_metrics"][payee.split(":", 1)[1]]
         metrics["revenue"] += amount
         metrics["profit"] += amount
-    w["pending_ledger"].append({
-        "tick": w["tick"], "debit": payer, "credit": payee,
-        "amount": amount, "kind": kind, "ref": ref,
-    })
+    entry = {"tick": w["tick"], "debit": payer, "credit": payee,
+             "amount": amount, "kind": kind, "ref": ref}
+    w["pending_ledger"].append(entry)
+    # Bounded read model, unlike the durable SQLite finance_ledger.
+    w.setdefault("finance_history", []).append(entry.copy())
+    if len(w["finance_history"]) > 200:
+        del w["finance_history"][:-200]
 
 
 def _take(fac: dict, good: str, count: int) -> int:
@@ -291,22 +311,33 @@ def _produce(w: dict) -> None:
         fac = w["facilities"][fac_id]
         if fac["kind"] != "factory":
             continue
-        if fac["stock"]["grain"] < 1:
-            _buy(w, fac, "grain", fac["auto_buy_limit"])
-        if (fac["stock"]["grain"] < 1 or
-                sum(fac["stock"].values()) + 1 > fac["capacity"] or
-                w["wallets"]["company:" + fac["owner"]] < 4000):
-            w["stats"]["blocked"] += 1
-            continue
-        _money(w, "company:" + fac["owner"], "residents:" + fac["city"],
-               3000, "wages", fac_id)
-        _money(w, "company:" + fac["owner"], "suppliers:" + fac["city"],
-               1000, "energy", fac_id)
-        consumed_cost = _take(fac, "grain", 1)
-        _put(fac, "bread", 2, consumed_cost + 4000)
-        w["audit"]["grain"]["converted_in"] += 1
-        w["audit"]["bread"]["converted_out"] += 2
-        w["stats"]["produced"] += 2
+        workers = fac.get("workers", STAFF_BASE["factory"])
+        wage = fac.get("wage_minor", WAGE_MINOR)
+        requested = fac.get("production_target", 1)
+        # 4 workers per unit, capped by the player's target and physical stock.
+        units = min(MAX_PRODUCTION_BATCH, requested, workers // 4)
+        fac["production_last_tick"] = w["tick"]
+        fac["production_last_units"] = 0
+        for _ in range(units):
+            if fac["stock"]["grain"] < 1:
+                _buy(w, fac, "grain", fac["auto_buy_limit"])
+            wages = 4 * wage
+            energy = 1000
+            if (fac["stock"]["grain"] < 1 or
+                    sum(fac["stock"].values()) + 1 > fac["capacity"] or
+                    w["wallets"]["company:" + fac["owner"]] < wages + energy):
+                w["stats"]["blocked"] += 1
+                break
+            _money(w, "company:" + fac["owner"], "residents:" + fac["city"],
+                   wages, "wages", fac_id)
+            _money(w, "company:" + fac["owner"], "suppliers:" + fac["city"],
+                   energy, "energy", fac_id)
+            consumed_cost = _take(fac, "grain", 1)
+            _put(fac, "bread", 2, consumed_cost + wages + energy)
+            w["audit"]["grain"]["converted_in"] += 1
+            w["audit"]["bread"]["converted_out"] += 2
+            w["stats"]["produced"] += 2
+            fac["production_last_units"] += 2
 
 
 def _local_restock(w: dict) -> None:
@@ -393,10 +424,18 @@ def _retail(w: dict) -> None:
 def _close_month(w: dict) -> None:
     # One rent charge per facility, once every 360 production ticks.
     for fac in w["facilities"].values():
-        fee = {"factory": 12_000, "shop": 8_000, "warehouse": 4_000}[fac["kind"]]
+        fee = {"factory": 12_000, "shop": 8_000, "warehouse": 4_000,
+               "mine": 7_000, "research_center": 9_000, "car_dealership": 6_000}[fac["kind"]]
         owner = "company:" + fac["owner"]
         paid = min(fee, w["wallets"][owner])
         _money(w, owner, "treasury:" + fac["city"], paid, "monthly.rent", fac["id"])
+    for fac in w["facilities"].values():
+        if fac["kind"] == "factory":
+            continue  # Factories pay only for actual production batches.
+        salary = fac.get("workers", STAFF_BASE[fac["kind"]]) * fac.get("wage_minor", WAGE_MINOR)
+        payer = "company:" + fac["owner"]
+        paid = min(salary, w["wallets"][payer])
+        _money(w, payer, "residents:" + fac["city"], paid, "wages", fac["id"])
     w["stats"]["days_closed"] += 30
     w["month_reports"].append({"month": w["tick"] // TICKS_PER_MONTH,
                                "sales_minor": w["stats"]["sales"]})
@@ -450,10 +489,25 @@ def apply_command(w: dict, actor: str, command: dict) -> dict:
     if fac_id is not None and not isinstance(fac_id, str):
         raise EconomyError("invalid facility id")
     fac = w["facilities"].get(fac_id)
-    if kind in ("facility.set_price", "facility.buy", "shipment.create"):
+    if kind in ("facility.set_price", "facility.buy", "shipment.create", "facility.set_staff", "facility.set_production"):
         if fac is None or fac["owner"] != actor:
             raise EconomyError("facility not owned")
-    if kind == "facility.set_price":
+    if kind == "facility.set_staff":
+        workers, wage = command.get("workers"), command.get("wage_minor")
+        if (type(workers) is not int or type(wage) is not int or
+                not 0 <= workers <= STAFF_CAP[fac["kind"]] or
+                not 500 <= wage <= 3000):
+            raise EconomyError("invalid staffing")
+        fac["workers"] = workers
+        fac["wage_minor"] = wage
+        result = {"ok": True, "workers": workers, "wage_minor": wage}
+    elif kind == "facility.set_production":
+        target = command.get("target")
+        if fac["kind"] != "factory" or type(target) is not int or not 0 <= target <= MAX_PRODUCTION_BATCH:
+            raise EconomyError("invalid production target")
+        fac["production_target"] = target
+        result = {"ok": True, "target": target}
+    elif kind == "facility.set_price":
         good = command.get("good")
         price = command.get("price_minor")
         if (fac["kind"] != "shop" or not isinstance(good, str) or good not in ("bread", "milk") or
@@ -600,4 +654,9 @@ def snapshot(w: dict, actor: str) -> dict:
         "shipments": copy.deepcopy([s for s in w["shipments"] if s["owner"] == actor]),
         "market": market, "stats": copy.deepcopy(w["stats"]),
         "company_metrics": copy.deepcopy(w["company_metrics"][actor]),
+        "finance_history": [
+            copy.deepcopy(entry) for entry in w.get("finance_history", [])[-100:]
+            if entry["debit"] == "company:" + actor or entry["credit"] == "company:" + actor
+        ],
+        "staff_limits": STAFF_CAP.copy(),
     }
