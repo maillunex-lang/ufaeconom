@@ -36,3 +36,30 @@ HTML static checks include correct screenshot alt text, main CTA, responsive CSS
 Actual browser rendering across 360, 390, 768 and 1440px, 200% zoom and real field CWV metrics were NOT measured in the first deployment because no browser was available on Lunex. These remain useful QA follow-ups. No success in real downloads/installs or conversion rate is claimed from HTTP checks alone.
 
 Do not modify the existing /agrogame/ landing, running game services, Nginx configuration or unrelated APKs.
+
+
+## Синхронизация релизных каналов (обновление 13.11.2026)
+
+`website/refresh_channels.py` отдельно от стабильного обновлятора проверяет наличие подписанных бета-APK в `/var/www/rikagro-game/business-empire/beta/` и публикует `/business-empire/release/channels.json`. Проверяются packageId, versionCode, версия в имени файла и пакете, известный Android signing cert, SHA-256 и размер. Копирование/переименование беты без корректной подписи и согласованной версии не делает её релизом.
+
+Пример настройки существующего cron (отдельная строка, только после установки и проверки):
+
+```cron
+*/5 * * * * root /usr/bin/python3 /opt/ufaeconom-landing/refresh_channels.py >> /var/log/ufaeconom-landing-channels.log 2>&1
+```
+
+Стабильный канал и бета различаются: `latest.apk` обновляется только старым стабильным release workflow. Beta располагается в `beta/BusinessEmpireOnline-X.Y.Z-beta.apk`, является отдельным дополнением сайта, не вытесняет стабильную версию и не запускает MMO backend.
+
+`website/index.html` показывает отдельную бета-карточку, версию и размер из JSON без полного перерисовывания страницы. Если последний контрольный JSON временно недоступен, сохраняется вручную проверенная безопасная ссылка на 0.7.0-beta; не происходит подмены на неизвестный APK.
+
+Проверки:
+
+```sh
+python3 -m unittest -v website.test_refresh_channels
+python3 -m website.refresh_channels --stable /var/www/rikagro-game/business-empire/release/latest.json --beta-dir /var/www/rikagro-game/business-empire/beta --output /tmp/business-empire-channels-qa.json
+```
+
+**Граница автоматизации:** Release checker обновляет только **подтверждённые файлы сборок и их метаданные**. Он не создаёт APK, не публикует закрытые GitHub-ветки, не переписывает описания игровых механик сам по себе и не выставляет тестовый сервер наружу. При появлении новых систем текстовые разделы и скриншоты требуют проверки и отдельного обновления в репозитории.
+
+Подтверждённая бета 0.7.0-beta: 27 618 811 байт; SHA-256 `cb28533d8b2b303b106c098940a319d63e75937b87fb7d8d03edecc14c07bbb3`. Публичный MMO-сервер пока не запущен; на реальных Android-телефонах версия не тестировалась.
+
