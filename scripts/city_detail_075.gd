@@ -46,6 +46,25 @@ static func draw_ground(canvas: Node2D, pos: Vector2, tile: Vector2i, kind: Stri
         if detail >= 2 and posmod(tile.x + tile.y, 13) == 0:
             canvas.draw_line(pos + Vector2(-15, 7), pos + Vector2(-12, 3), Color("#608c5b"), 2.0)
 
+static func building_lod(zoom: float, quality: int) -> int:
+    # 0: compact marker, 1: recognizable isometric silhouette, 2: full art.
+    if zoom < 0.72 or quality <= 0:
+        return 0
+    if zoom < 1.05 or quality == 1:
+        return 1
+    return 2
+
+static func draw_building_silhouette(canvas: Node2D, pos: Vector2, kind: String, color: Color) -> void:
+    var height := 29.0 if kind in ["Жилой дом", "Офис", "Завод", "Исследовательский центр"] else 19.0
+    var left := pos + Vector2(-20, -8)
+    var front := pos + Vector2(0, 3)
+    var right := pos + Vector2(20, -8)
+    var rise := Vector2(0, -height)
+    canvas.draw_colored_polygon(PackedVector2Array([left, front, front + rise, left + rise]), color.darkened(0.26))
+    canvas.draw_colored_polygon(PackedVector2Array([front, right, right + rise, front + rise]), color.darkened(0.10))
+    canvas.draw_colored_polygon(PackedVector2Array([left + rise, front + rise, right + rise, pos + Vector2(0, -height - 20)]), color.lightened(0.16))
+
+
 static func draw_building_shadow(canvas: Node2D, pos: Vector2, tile: Vector2i, zoom: float) -> void:
     if detail_for_zoom(zoom) == 0:
         return
