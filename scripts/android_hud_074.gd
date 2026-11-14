@@ -352,7 +352,8 @@ func update_construction() -> void:
             construction_picker.select(selected_index)
     elif construction_picker.selected != -1:
         construction_picker.select(-1)
-    var cost: int = game.CompanyState.LAND_PRICE if not owned else int(game.CompanyState.CONSTRUCTION.get(game.construction_preview, 0))
+    var server_costs := {"Завод": 800000, "Магазин": 350000, "Склад": 280000, "Шахта": 700000, "Исследовательский центр": 600000, "Автосалон": 500000}
+    var cost: int = game.CompanyState.LAND_PRICE if not owned else int(server_costs.get(game.construction_preview, 0)) if game._online_land() else int(game.CompanyState.CONSTRUCTION.get(game.construction_preview, 0))
     construction_cost.text = "Цена участка: %d ₽" % cost if not owned else "Стоимость строительства: %d ₽" % cost if game.construction_preview != "" else "Выберите тип здания"
     var wallet: int = int(game.mmo_panel.client.snapshot.get("cash_minor", 0)) / 100 if game._online_land() else game.company.cash
     construction_buy.disabled = not owned and wallet < cost
