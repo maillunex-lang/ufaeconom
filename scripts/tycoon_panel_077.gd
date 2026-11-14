@@ -78,7 +78,7 @@ func _ready() -> void:
         goods_picker.add_item(good)
     pages[3].add_child(goods_picker)
     goods_picker.item_selected.connect(func(_i: int) -> void: _refresh_price())
-    bread_price = _spin(pages[3], "Цена хлеба, коп.", 10850, 23250, 50)
+    bread_price = _spin(pages[3], "Цена выбранного товара, коп.", 10850, 23250, 50)
     _action(pages[3], "Изменить цену", _set_price)
     destination = OptionButton.new()
     pages[4].add_child(destination)
@@ -88,7 +88,7 @@ func _ready() -> void:
     pages[4].add_child(freight_goods)
     _action(pages[4], "Расширить склад (+100 мест)", _expand_storage)
     freight_qty = _spin(pages[4], "Количество единиц (1–50)", 1, 50, 1)
-    _action(pages[4], "Отправить хлеб", _send_shipment)
+    _action(pages[4], "Отправить выбранный товар", _send_shipment)
     offer_good = OptionButton.new()
     for good in ["ore", "steel", "parts", "car", "grain", "flour", "bread"]:
         offer_good.add_item(good)
