@@ -15,6 +15,7 @@ const TycoonPanel077 = preload("res://scripts/tycoon_panel_077.gd")
 const SmartCity076 = preload("res://scripts/smart_city_076.gd")
 const AndroidPerformance076 = preload("res://scripts/android_performance_076.gd")
 const CityChunkCanvas = preload("res://scripts/city_chunk_canvas_0870.gd")
+const CityLOD08360 = preload("res://scripts/city_lod_08360.gd")
 const CityBackground = preload("res://scripts/city_background_0870.gd")
 const CityProfiler = preload("res://scripts/city_profiler_08346.gd")
 const ChunkBudget = preload("res://scripts/chunk_budget_08356.gd")
@@ -62,6 +63,8 @@ var pending_chunk_coords: Array[Vector2i] = []
 var pending_chunk_budget := 0
 var pending_chunk_zoom := 0.8
 var chunk_build_count := 0
+var stable_building_lod := 1
+var building_lod_changes := 0
 var adaptive_chunk_capacity := 2
 var adaptive_chunk_frame := 0
 var adaptive_chunk_fps := 60.0
@@ -126,7 +129,7 @@ func _sync_chunk_canvases() -> void:
 			if not static_chunk_nodes.has(key):
 				missing.append(Vector2i(cx, cy))
 			else:
-				static_chunk_nodes[key].set_detail(budget, camera.zoom.x)
+				static_chunk_nodes[key].set_detail(budget, camera.zoom.x, stable_building_lod)
 	for key in static_chunk_nodes.keys():
 		if not wanted.has(key):
 			static_chunk_nodes[key].queue_free()
@@ -153,7 +156,7 @@ func _build_pending_chunks() -> void:
 		var node = CityChunkCanvas.new()
 		node.name = "Terrain_%d_%d" % [coords.x, coords.y]
 		add_child(node)
-		node.configure(self, coords, pending_chunk_budget, pending_chunk_zoom)
+		node.configure(self, coords, pending_chunk_budget, pending_chunk_zoom, stable_building_lod)
 		static_chunk_nodes[key] = node
 		chunk_build_count += 1
 
@@ -420,7 +423,11 @@ func _draw() -> void:
     # Only dynamic city objects are rebuilt in this draw.
 	var visible := _visible_tile_rect()
 	var detail_budget := CityDetail075.detail_budget(camera.zoom.x, performance.level if performance != null else 1)
-	var building_lod := CityDetail075.building_lod(camera.zoom.x, performance.level if performance != null else 1)
+	var next_lod := CityLOD08360.stable(camera.zoom.x, performance.level if performance != null else 1, stable_building_lod)
+	if next_lod != stable_building_lod:
+		stable_building_lod = next_lod
+		building_lod_changes += 1
+	var building_lod := stable_building_lod
 	var far_lod := detail_budget == 0
 	# At emergency quality avoid per-tile decoration even at close zoom.
 	if performance != null and performance.level == 0:
@@ -455,7 +462,8 @@ func _draw() -> void:
 			var kind: String = static_data["kind"]
 			if COLORS.has(kind):
 				visible_render_buildings += 1
-				_draw_building_lod(pos, kind, tile, building_lod)
+				# Static buildings are cached in each terrain canvas.
+				# Only dynamic plots are rendered in this layer.
 			if not far_lod and bool(static_data["ore"]):
 				draw_circle(pos, 5.0, Color("#c28147"))
 			if not far_lod and not invested_levels.is_empty():
@@ -502,6 +510,8 @@ func _draw_building(pos: Vector2, kind: String, tile: Vector2i) -> void:
 	CityDetail075.draw_business_activity(self, pos, kind, camera.zoom.x)
 
 func _unhandled_input(event: InputEvent) -> void:
+	if android_hud != null and android_hud.settings_open:
+		return
 	if event is InputEventScreenTouch:
 		if event.pressed:
 			touches[event.index] = event.position
@@ -654,6 +664,11 @@ func _process(delta: float) -> void:
 	# Update immediately when the camera enters a new tile range, zoom changes,
 	# or Android quality switches. Avoid blank terrain while panning quickly.
 	var quality: int = performance.level if performance != null else 1
+	var new_lod := CityLOD08360.stable(camera.zoom.x, quality, stable_building_lod)
+	if new_lod != stable_building_lod:
+		stable_building_lod = new_lod
+		building_lod_changes += 1
+		chunk_sync_requested = true
 	var camera_changed := camera.position.distance_squared_to(last_chunk_camera_position) > 256.0
 	var zoom_changed := absf(camera.zoom.x - last_chunk_camera_zoom) > 0.005
 	if chunk_sync_requested or quality != last_chunk_quality or zoom_changed or (camera_changed and _visible_tile_rect() != last_chunk_visible) or chunk_sync_elapsed >= 0.50:
@@ -688,7 +703,7 @@ func _process(delta: float) -> void:
 		var rolling: Dictionary = city_profiler.summary()
 		camera_debug.text = "FPS %d (ср. %.0f) | %.1f ms | x%.2f | LOD %s | кварталы %d | здания %d" % [
 			Engine.get_frames_per_second(), float(rolling.get("avg_fps", 0.0)), 1000.0 / maxf(Engine.get_frames_per_second(), 1),
-			camera.zoom.x, "дальний" if camera.zoom.x < 0.72 else "обычный", static_chunk_nodes.size(), visible_render_buildings]
+			camera.zoom.x, "дальний" if stable_building_lod == 0 else "обычный", static_chunk_nodes.size(), visible_render_buildings]
 
 func _select_at(screen_position: Vector2) -> void:
 	var world: Vector2 = get_canvas_transform().affine_inverse() * screen_position

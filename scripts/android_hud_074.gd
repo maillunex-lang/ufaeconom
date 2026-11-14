@@ -30,6 +30,9 @@ var business_close: Button
 var business_title: Label
 var business_actions: HBoxContainer
 var settings_button: Button
+var settings_panel: PanelContainer
+var settings_backdrop: ColorRect
+var settings_open := false
 var compact_layout := false
 var top_header: HBoxContainer
 var construction_scroll: ScrollContainer
@@ -202,6 +205,24 @@ func _ready() -> void:
     menu_backdrop.color = Color("#07151fc9")
     menu_backdrop.mouse_filter = Control.MOUSE_FILTER_STOP
     safe.add_child(menu_backdrop)
+    settings_backdrop = ColorRect.new()
+    settings_backdrop.name = "SettingsBackdrop"
+    settings_backdrop.color = Color(0.02, 0.07, 0.10, 0.84)
+    settings_backdrop.mouse_filter = Control.MOUSE_FILTER_STOP
+    safe.add_child(settings_backdrop)
+    settings_panel = _panel("SettingsDialog")
+    var settings_scroll := ScrollContainer.new()
+    settings_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+    settings_panel.add_child(settings_scroll)
+    var settings_box := VBoxContainer.new()
+    settings_box.add_theme_constant_override("separation", 10)
+    settings_scroll.add_child(settings_box)
+    _label(settings_box, "НАСТРОЙКИ", 23)
+    _button(settings_box, "Качество графики", _cycle_quality)
+    _button(settings_box, "Автонастройка FPS", _toggle_auto)
+    _button(settings_box, "Закрыть настройки", _close_settings)
+    settings_backdrop.visible = false
+    settings_panel.visible = false
     menu_overlay = _panel("MainMenuOverlay")
     menu_scroll = ScrollContainer.new()
     menu_scroll.name = "MenuScroll"
@@ -507,7 +528,27 @@ func _open_profile() -> void:
 
 func _open_settings() -> void:
     _resume()
-    _toggle_local()
+    _close_panels()
+    settings_open = true
+    game.camera_debug.visible = false
+    settings_backdrop.visible = true
+    settings_panel.visible = true
+    top.visible = false
+    bottom.visible = false
+    camera_home.visible = false
+    construction_toggle.visible = false
+    _layout()
+
+func _close_settings() -> void:
+    settings_open = false
+    game.camera_debug.visible = true
+    settings_backdrop.visible = false
+    settings_panel.visible = false
+    top.visible = true
+    bottom.visible = true
+    camera_home.visible = true
+    construction_toggle.visible = true
+    _layout()
 
 
 func _exit_to_os() -> void:
@@ -596,6 +637,8 @@ func update_values() -> void:
     city_text.text = "▥ " + str(game.city_label.text).replace("Город: ", "").replace(" (демонстрация)", "")
     money_text.text = "Баланс: %d ₽" % int(game.mmo_panel.client.snapshot.get("cash_minor", 0) / 100) if game.mmo_panel.online_active() else "Локально: %d ₽" % game.company.cash
     calendar_text.text = "MMO • день %d" % int(game.mmo_panel.client.snapshot.get("game_day", 0)) if game.mmo_panel.online_active() else str(game.Calendar.label(game.company.day)) + " • 1 мес. / 24 ч"
+    if settings_open:
+        return
     if mission_panel.visible:
         business_panel.visible = false
         construction_panel.visible = false
@@ -649,6 +692,11 @@ func _layout() -> void:
     construction_toggle.size = Vector2(94, 48)
     menu_backdrop.position = Vector2.ZERO
     menu_backdrop.size = Vector2(w, h)
+    settings_backdrop.position = Vector2.ZERO
+    settings_backdrop.size = Vector2(w, h)
+    var settings_rect := fit_panel(w, h, 480, 360, 8, 8)
+    settings_panel.position = settings_rect.position
+    settings_panel.size = settings_rect.size
     var menu_rect := fit_panel(w, h, 470, 490, 4, 4)
     menu_overlay.position = menu_rect.position
     menu_overlay.size = menu_rect.size

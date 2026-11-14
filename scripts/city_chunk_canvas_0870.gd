@@ -3,28 +3,35 @@ extends Node2D
 const Land = preload("res://scripts/city_land.gd")
 const CityDetail = preload("res://scripts/city_detail_075.gd")
 const CityGenerator = preload("res://scripts/city_generator.gd")
+const BuildingArt = preload("res://scripts/building_art.gd")
 var city: Node2D
 var chunk: Vector2i
 var budget := 0
 var zoom := 0.8
+var building_lod := 1
+var last_draw_us := 0
+var draw_calls := 0
 
-func configure(owner: Node2D, coords: Vector2i, detail: int, camera_zoom: float) -> void:
+func configure(owner: Node2D, coords: Vector2i, detail: int, camera_zoom: float, lod: int = 1) -> void:
     city = owner
     chunk = coords
     budget = detail
     zoom = camera_zoom
+    building_lod = lod
     z_index = -1
     queue_redraw()
 
-func set_detail(detail: int, camera_zoom: float) -> void:
-    if budget != detail or (budget > 1 and absf(zoom - camera_zoom) > 0.12):
+func set_detail(detail: int, camera_zoom: float, lod: int = 1) -> void:
+    if budget != detail or building_lod != lod or (budget > 1 and absf(zoom - camera_zoom) > 0.12):
         budget = detail
         zoom = camera_zoom
+        building_lod = lod
         queue_redraw()
 
 func _draw() -> void:
     if city == null:
         return
+    var started := Time.get_ticks_usec()
     for y in range(chunk.y * Land.CHUNK, (chunk.y + 1) * Land.CHUNK):
         for x in range(chunk.x * Land.CHUNK, (chunk.x + 1) * Land.CHUNK):
             var tile := Vector2i(x, y)
@@ -36,10 +43,26 @@ func _draw() -> void:
                 draw_polyline(data["outline"], Color("#527b61"), 0.8)
             # Roads and trees are immutable world decoration. Cache their draw
             # commands together with the ground, never in the dynamic layer.
+            if city.COLORS.has(data["kind"]):
+                _draw_static_building(data["pos"], data["kind"], tile)
             if data["kind"] == "Дорога":
                 _draw_road(data["pos"], x, y)
             elif data["kind"] == "Дерево":
                 _draw_tree(data["pos"], tile)
+
+    last_draw_us = Time.get_ticks_usec() - started
+    draw_calls += 1
+
+func _draw_static_building(pos: Vector2, kind: String, tile: Vector2i) -> void:
+    var tint: Color = city.COLORS.get(kind, Color("#9db7b5"))
+    if building_lod == 0:
+        draw_rect(Rect2(pos + Vector2(-12, -20), Vector2(24, 24)), tint)
+    elif building_lod == 1:
+        CityDetail.draw_building_silhouette(self, pos, kind, tint)
+    else:
+        CityDetail.draw_building_shadow(self, pos, tile, zoom)
+        BuildingArt.draw(self, pos, "НИИ" if kind == "Исследовательский центр" else kind, CityDetail.level(tile, kind), false, CityDetail.district(tile))
+        CityDetail.draw_business_activity(self, pos, kind, zoom)
 
 func _draw_road(pos: Vector2, x: int, y: int) -> void:
     if budget <= 0:
