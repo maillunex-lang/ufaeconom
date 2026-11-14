@@ -1,0 +1,18 @@
+extends SceneTree
+const Main = preload("res://scripts/main.gd")
+const HUD = preload("res://scripts/android_hud_074.gd")
+const Tycoon = preload("res://scripts/tycoon_panel_077.gd")
+func _initialize() -> void:
+    var game = Main.new()
+    assert(game.has_method("_refresh_economy_ui"))
+    assert(game.has_method("_sync_calendar"))
+    assert(game.has_method("_on_world_snapshot"))
+    game.free()
+    var hud = HUD.new()
+    assert(hud.has_method("update_values"))
+    hud.free()
+    var tycoon = Tycoon.new()
+    assert(tycoon.has_method("_send_shipment"))
+    tycoon.free()
+    print("INTEGRATION_084 PASS")
+    quit(0)
