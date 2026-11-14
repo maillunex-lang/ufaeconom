@@ -747,8 +747,10 @@ func _update_actions() -> void:
 				_add_action("Отменить предпросмотр", _cancel_preview)
 		else:
 			info.text = "Ваш участок %d:%d • %s" % [selected.x, selected.y, building]
-			if building in ["Шахта", "Исследовательский центр", "Автосалон"]:
-				info.text += " • экономическая цепочка ещё не подключена"
+			if building == "Исследовательский центр":
+				info.text += " • исследования пока не реализованы"
+			elif not _online_land() and building in ["Шахта", "Автосалон"]:
+				info.text += " • доступна только демонстрационная экономика"
 	elif kind == "Свободный участок" and not _city_plots().has(Land.plot_key(selected)):
 		_add_action("Купить участок (%d ₽)" % CompanyState.LAND_PRICE, _buy_land)
 
@@ -803,6 +805,8 @@ func _construct(kind: String) -> void:
 	queue_redraw()
 
 func _sync_calendar() -> void:
+	if _online_land():
+		return # Server owns MMO time; never advance the local economy while online.
 	var report: Dictionary = company.sync_calendar(int(Time.get_unix_time_from_system()))
 	if int(report["advanced"]) > 0:
 		message_label.text = "Прошло %d игровых дней • дата %s" % [int(report["advanced"]), str(report["date"])]
@@ -832,6 +836,23 @@ func _toggle_timer() -> void:
 
 func _refresh_economy_ui() -> void:
 	if economy_label == null:
+		return
+	if _online_land():
+		var snap: Dictionary = mmo_panel.client.snapshot
+		var city_id: String = Land.CITY_IDS[city_index]
+		var market: Dictionary = snap.get("market", {}).get(city_id, {})
+		var demand: Dictionary = market.get("demand_per_tick", {})
+		var metrics: Dictionary = snap.get("company_metrics", {})
+		var facilities: Dictionary = snap.get("facilities", {})
+		var city_facilities := 0
+		for fac in facilities.values():
+			if str(fac.get("city", "")) == city_id:
+				city_facilities += 1
+		economy_label.text = "MMO • данные сервера | день %d | месяц %d\n" % [int(snap.get("game_day", 0)), int(snap.get("game_month", 0))]
+		economy_label.text += "%s | предприятий компании: %d\n" % [CityGenerator.CITIES[city_index]["name"], city_facilities]
+		economy_label.text += "Спрос за тик: хлеб %d • молоко %d • мука %d • автомобили %d\n" % [int(demand.get("bread", 0)), int(demand.get("milk", 0)), int(demand.get("flour", 0)), int(demand.get("car", 0))]
+		economy_label.text += "Выручка: %d ₽ | прибыль: %+d ₽\n" % [int(metrics.get("revenue", 0)) / 100, int(metrics.get("profit", 0)) / 100]
+		economy_label.text += "Баланс и остатки подтверждаются сервером. Подробности: Бизнес."
 		return
 	var city_market: Dictionary = company.market(city_index)
 	var stock: Dictionary = city_market["stock"]
